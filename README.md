@@ -1,49 +1,67 @@
 # WorkZen
 
-WorkZen is a productivity and focus-management app designed to help users plan work, enter distraction-free focus sessions, and log what actually happened during those sessions.
+Work with intention. Focus without friction.
 
-## Product Summary
+WorkZen is a productivity system that connects task planning, distraction-free focus sessions, and real session data so you do not just have tasks, you actually complete focused work on them.
 
-WorkZen bridges the gap between having tasks and doing focused work. Instead of stopping at task management, it connects three parts of the workflow:
+## What It Does
 
-- plan tasks
-- run focus sessions
-- capture real session history
+| Layer | What it solves |
+| --- | --- |
+| Tasks | Organize and prioritize what needs doing |
+| Focus Mode | Enter a distraction-free timed work session |
+| Session Logging | Record what actually happened, not just what was planned |
+| Insights | Understand your own focus behavior over time |
 
-The current direction is an in-development frontend prototype that will evolve into a full product with persistent storage, backend integration, and future focus insights.
+## Current Status
 
-## Target Users
+In development. Frontend scaffold is in place and backend structure is ready for implementation.
 
-- students
-- early-career knowledge workers
-- anyone who needs a simple system for planning and protected focus
+- [x] Repository structure and project docs
+- [ ] Task management UI wiring
+- [ ] Focus mode wiring
+- [ ] Session logging flow
+- [ ] Backend API implementation
+- [ ] Authentication
+- [ ] Deployment
 
-## Current Product Direction
+## Tech Stack
 
-- React frontend
-- Tailwind CSS styling
-- shadcn/ui component system
-- real session logging
-- backend-backed persistence
+### Frontend
 
-## Core Workflow
+- React
+- Vite
+- Tailwind CSS
 
-1. Create or organize tasks.
-2. Start a focus session tied to work that matters.
-3. Record what happened during that session.
-4. Review progress and improve focus behavior over time.
+### Backend
 
-## Open Product Questions
+- Node.js
+- Express
+- MongoDB or PostgreSQL (to be decided)
 
-- Which backend stack should power the app?
-- How should tasks connect to sessions?
-- Which analytics matter most to users?
-- What is the clearest one-line product promise?
+## Getting Started
 
-## Suggested Next Steps
+### Frontend
 
-1. Define the task and focus-session data model.
-2. Choose the backend stack and persistence approach.
-3. Build the first end-to-end flow from task creation to session logging.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-See [docs/PROJECT_SNAPSHOT.md](./docs/PROJECT_SNAPSHOT.md) for the detailed project brief.
+### Backend
+
+```bash
+cd backend
+npm install
+npm run dev
+```
+
+## Project Docs
+
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- [docs/DATA_MODEL.md](./docs/DATA_MODEL.md)
+- [docs/ROADMAP.md](./docs/ROADMAP.md)
+- [docs/PROJECT_SNAPSHOT.md](./docs/PROJECT_SNAPSHOT.md)
+
+WorkZen is not another to-do list. It is the layer between planning and doing.
