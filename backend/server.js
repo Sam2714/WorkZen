@@ -1,5 +1,8 @@
 import express from "express";
 import cors from "cors";
+import path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import authRoutes from "./routes/auth.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import sessionRoutes from "./routes/session.routes.js";
@@ -8,21 +11,45 @@ import { connectDb } from "./config/db.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientBuildDir = path.resolve(__dirname, "../frontend/dist");
+const clientIndexFile = path.join(clientBuildDir, "index.html");
+const hasClientBuild = existsSync(clientIndexFile);
 
 app.use(
   cors({
-    origin: env.clientUrl,
+    origin(origin, callback) {
+      if (!origin || env.clientOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked for origin ${origin}`));
+    },
   }),
 );
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+  res.json({
+    status: "ok",
+    environment: env.nodeEnv,
+    frontendServed: hasClientBuild,
+  });
 });
 
 app.use("/api/auth", authRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/sessions", sessionRoutes);
+
+if (hasClientBuild) {
+  app.use(express.static(clientBuildDir));
+
+  app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_req, res) => {
+    res.sendFile(clientIndexFile);
+  });
+}
+
 app.use(errorMiddleware);
 
 async function startServer() {
