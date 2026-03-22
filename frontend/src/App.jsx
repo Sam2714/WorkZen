@@ -4,8 +4,6 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
    GLOBAL CSS
 ══════════════════════════════════════════════ */
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,700;1,9..144,400&family=IBM+Plex+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
-
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --s0:#07080d;--s1:#0d0e18;--s2:#12131e;--s3:#181926;--s4:#1e2030;--s5:#262840;
@@ -16,9 +14,13 @@ const CSS = `
   --red:#fb7185;--red-dim:rgba(251,113,133,0.12);
   --blue:#60a5fa;--blue-dim:rgba(96,165,250,0.12);
   --violet:#a78bfa;--violet-dim:rgba(167,139,250,0.12);
-  --sans:'DM Sans',sans-serif;--mono:'IBM Plex Mono',monospace;--serif:'Fraunces',Georgia,serif;
+  --sans:'Segoe UI Variable','Aptos','Trebuchet MS',sans-serif;
+  --mono:'Cascadia Mono','Consolas','Lucida Console',monospace;
+  --serif:'Palatino Linotype','Book Antiqua',Georgia,serif;
 }
-html,body{min-height:100%;font-family:var(--sans);background:var(--s0);color:var(--t1);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html,body,#root{width:100%;height:100%;min-height:100%}
+body{font-family:var(--sans);background:var(--s0);color:var(--t1);-webkit-font-smoothing:antialiased;overflow:auto}
+#root{background:var(--s0)}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--s5);border-radius:4px}
 
 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -32,13 +34,44 @@ html,body{min-height:100%;font-family:var(--sans);background:var(--s0);color:var
 @keyframes checkPop{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
-.app{
+.popup-stage{
   min-height:100vh;
+  width:100%;
+  display:flex;
+  justify-content:flex-end;
+  align-items:stretch;
+  padding:18px 22px;
+  background:
+    radial-gradient(ellipse 75% 50% at 12% 0%,rgba(167,139,250,0.08) 0%,transparent 55%),
+    radial-gradient(ellipse 55% 40% at 88% 100%,rgba(96,165,250,0.06) 0%,transparent 55%),
+    var(--s0);
+}
+.popup-stage.extension-runtime{
+  padding:0;
+  min-height:100vh;
+  background:var(--s0);
+}
+.app{
+  width:min(430px,100%);
+  height:calc(100vh - 36px);
+  min-height:680px;
   background:
     radial-gradient(ellipse 75% 50% at 12% 0%,rgba(167,139,250,0.08) 0%,transparent 55%),
     radial-gradient(ellipse 55% 40% at 88% 100%,rgba(96,165,250,0.06) 0%,transparent 55%),
     var(--s0);
   display:flex;
+  overflow:hidden;
+  border:1px solid var(--b1);
+  border-radius:22px;
+  box-shadow:0 24px 60px rgba(0,0,0,0.45);
+}
+.popup-stage.extension-runtime .app{
+  width:100%;
+  height:100vh;
+  min-height:100vh;
+  border:none;
+  border-radius:0;
+  box-shadow:none;
 }
 
 /* Sidebar */
@@ -71,17 +104,17 @@ html,body{min-height:100%;font-family:var(--sans);background:var(--s0);color:var
 .footer-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite;flex-shrink:0}
 
 /* Content */
-.content{margin-left:210px;min-height:100vh;flex:1}
+.content{margin-left:210px;min-height:100vh;flex:1;overflow-y:auto;overflow-x:hidden}
 .page-hdr{position:sticky;top:0;z-index:40;padding:0 26px;height:54px;display:flex;align-items:center;justify-content:space-between;background:rgba(7,8,13,0.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--b1)}
 .page-title{font-family:var(--serif);font-size:17px;font-weight:500;letter-spacing:-0.3px}
 .page-title em{font-style:italic;color:var(--violet)}
 .page-sub{font-size:11px;color:var(--t3);font-family:var(--mono);margin-left:7px}
-.page-body{padding:22px 26px;animation:pageIn 0.3s ease both}
+.page-body{padding:22px 26px;animation:pageIn 0.3s ease both;overflow-x:hidden}
 
 /* Panels */
 .panel{background:var(--s1);border:1px solid var(--b1);border-radius:16px;overflow:hidden;transition:border-color 0.2s;animation:fadeUp 0.4s ease both}
 .panel:hover{border-color:var(--b2)}
-.panel-hd{padding:13px 17px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between}
+.panel-hd{padding:13px 17px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .panel-title{font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:var(--t3);font-family:var(--mono)}
 .panel-bd{padding:17px}
 
@@ -166,12 +199,13 @@ textarea.inp{min-height:58px}
 .search-wrap .inp{padding-left:30px;font-size:12px}
 
 /* Toast */
-.toast{position:fixed;bottom:20px;right:20px;z-index:400;display:flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;background:var(--s3);border:1px solid var(--b2);box-shadow:0 8px 30px rgba(0,0,0,0.5);font-size:12px;font-weight:500;backdrop-filter:blur(20px);animation:toastSlide 0.28s ease}
+.toast{position:fixed;bottom:14px;right:14px;z-index:400;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;background:var(--s3);border:1px solid var(--b2);box-shadow:0 8px 30px rgba(0,0,0,0.5);font-size:12px;font-weight:500;backdrop-filter:blur(20px);animation:toastSlide 0.28s ease;max-width:calc(100vw - 28px)}
 .toast-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 
 /* Focus page */
 .focus-center{min-height:calc(100vh - 54px);display:flex;position:relative;overflow:hidden}
 .focus-main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;position:relative}
+.focus-main-shell{width:min(100%,360px);display:flex;flex-direction:column;align-items:center;justify-content:center;margin:0 auto;position:relative;z-index:1}
 .focus-ring-wrap{position:relative;width:256px;height:256px;margin-bottom:38px}
 .focus-ring-wrap svg{position:absolute;inset:0}
 .ring-inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
@@ -179,44 +213,167 @@ textarea.inp{min-height:58px}
 .ring-time{font-size:54px;font-weight:400;letter-spacing:-3px;font-family:var(--serif);color:var(--t1);line-height:1}
 .ring-time.ticking{animation:beat 1s ease-in-out infinite}
 .ring-session{font-size:10px;color:var(--t3);font-family:var(--mono);margin-top:5px}
-.fc-row{display:flex;gap:9px;margin-bottom:12px}
-.fc-btn{padding:9px 22px;border-radius:10px;cursor:pointer;border:1px solid var(--b2);background:var(--s2);color:var(--t2);font-family:var(--sans);font-size:13px;font-weight:600;transition:all 0.2s}
+.focus-controls{width:min(100%,320px);display:flex;flex-direction:column;align-items:center;gap:12px}
+.fc-row{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.fc-btn{display:flex;align-items:center;justify-content:center;min-height:48px;padding:9px 22px;border-radius:10px;cursor:pointer;border:1px solid var(--b2);background:var(--s2);color:var(--t2);font-family:var(--sans);font-size:13px;font-weight:600;transition:all 0.2s}
 .fc-btn:hover{background:var(--s3);color:var(--t1);transform:translateY(-1px)}
 .fc-btn.primary{background:linear-gradient(135deg,var(--violet),var(--blue));color:#fff;border:none;padding:10px 32px;box-shadow:0 6px 24px rgba(167,139,250,0.3)}
 .fc-btn.primary:hover{box-shadow:0 10px 32px rgba(167,139,250,0.45);transform:translateY(-2px)}
 .fc-btn.danger{border-color:rgba(251,113,133,0.2);color:rgba(251,113,133,0.55)}
 .fc-btn.danger:hover{color:var(--red);background:var(--red-dim)}
-.fc-hint{font-size:11px;color:var(--t3);font-family:var(--mono);letter-spacing:0.04em}
+.fc-hint{max-width:290px;font-size:11px;color:var(--t3);font-family:var(--mono);letter-spacing:0.04em;text-align:center}
 .fc-done{display:flex;align-items:center;gap:7px;margin-bottom:22px;padding:8px 16px;border-radius:8px;background:var(--green-dim);border:1px solid rgba(74,222,128,0.22);color:var(--green);font-size:12px;font-weight:600;font-family:var(--mono);animation:fadeUp 0.4s ease;position:relative;z-index:1}
 .focus-side{width:300px;border-left:1px solid var(--b1);background:var(--s1);display:flex;flex-direction:column;overflow-y:auto}
 .focus-side-section{padding:16px 16px 0}
 .focus-side-section + .focus-side-section{border-top:1px solid var(--b1);padding-top:16px}
 .focus-side-label{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--t3);font-family:var(--mono);margin-bottom:12px}
 
+.popup-mode{flex-direction:column}
+.popup-mode .sidebar{
+  position:sticky;top:0;bottom:auto;left:0;width:100%;height:auto;
+  border-right:none;border-top:none;border-bottom:1px solid var(--b1);
+  flex-direction:column;justify-content:flex-start;padding:0;
+  background:rgba(7,8,13,0.98);
+}
+.popup-mode .sidebar-logo{display:flex;padding:14px 16px 8px;border-bottom:none}
+.popup-mode .nav-section,.popup-mode .sidebar-footer{display:none}
+.popup-mode .nav{
+  flex-direction:row;width:100%;padding:0 12px 10px;gap:6px;
+  align-items:stretch;justify-content:flex-start;overflow-x:auto;overflow-y:hidden;
+}
+.popup-mode .nav-item{
+  position:relative;min-width:84px;flex:1;
+  flex-direction:column;align-items:flex-start;gap:4px;
+  padding:8px 10px;font-size:10px;border-radius:10px;
+  background:var(--s2) !important;border:1px solid transparent !important;
+}
+.popup-mode .nav-item.active{background:var(--s3) !important;border-color:var(--b2) !important}
+.popup-mode .nav-icon{font-size:13px;margin-bottom:0}
+.popup-mode .nav-label{font-size:10px;line-height:1.2}
+.popup-mode .nav-badge{position:static;font-size:8px;padding:1px 4px}
+.popup-mode .content{margin-left:0;min-height:0;flex:1;overflow-y:auto;overflow-x:hidden}
+.popup-mode .page-hdr{padding:12px 16px;height:auto;align-items:flex-start;justify-content:flex-start;gap:8px;background:rgba(7,8,13,0.94)}
+.popup-mode .page-title{font-size:15px}
+.popup-mode .page-sub{display:none}
+.popup-mode .page-body{padding:14px}
+.popup-mode .panel{background:rgba(13,14,24,0.96);border-color:rgba(200,210,255,0.08)}
+.popup-mode .panel-hd{padding:12px 14px;align-items:flex-start}
+.popup-mode .panel-bd{padding:14px}
+.popup-mode .panel-title,
+.popup-mode .field-label,
+.popup-mode .tile-lbl,
+.popup-mode .stat-lbl,
+.popup-mode .focus-side-label{color:rgba(238,240,248,0.42)}
+.popup-mode .inp{background:rgba(24,25,38,0.72);border-color:rgba(200,210,255,0.10)}
+.popup-mode .inp::placeholder{color:rgba(238,240,248,0.22)}
+.popup-mode .search-wrap{width:100% !important}
+.popup-mode .search-wrap .inp{width:100%}
+.popup-mode .prio-group{flex-wrap:wrap}
+.popup-mode .prio-opt{min-width:78px}
+.popup-mode .submit-btn{padding:9px}
+.popup-mode .page-body > div[style*="display: grid"],
+.popup-mode .page-body > div[style*="display:grid"]{grid-template-columns:1fr !important}
+.popup-mode .stats-grid{grid-template-columns:repeat(2,1fr) !important}
+.popup-mode .stat-card{padding:10px 11px}
+.popup-mode .stat-icon{margin-bottom:5px}
+.popup-mode .stat-val{font-size:18px}
+.popup-mode .stat-lbl{font-size:9px}
+.popup-mode .tiles{grid-template-columns:repeat(2,1fr) !important}
+.popup-mode .tile{padding:8px 10px}
+.popup-mode .tile-val{font-size:15px}
+.popup-mode .empty{padding:26px 16px}
+.popup-mode .group-div{margin:10px 0 6px}
+.popup-mode .task{gap:8px;padding:10px 11px}
+.popup-mode .task:hover{transform:none}
+.popup-mode .task-name{
+  white-space:normal;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;
+}
+.popup-mode .task-desc{
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.popup-mode .task-meta{gap:4px}
+.popup-mode .del-btn{opacity:1}
+.popup-mode .empty-sub{color:rgba(238,240,248,0.42)}
+.popup-mode .focus-center{flex-direction:column;min-height:auto}
+.popup-mode .focus-main{padding:34px 18px 28px;align-items:center;text-align:center}
+.popup-mode .focus-main-shell{width:min(100%,320px)}
+.popup-mode .focus-ring-wrap{width:min(100%,244px);height:auto;aspect-ratio:1/1;margin:0 auto 24px}
+.popup-mode .focus-ring-wrap svg{width:100%;height:100%}
+.popup-mode .ring-time{font-size:42px}
+.popup-mode .ring-session,.popup-mode .fc-hint{text-align:center}
+.popup-mode .fc-done{margin-bottom:16px;padding:8px 12px;font-size:11px;text-align:center}
+.popup-mode .focus-controls{width:min(100%,300px)}
+.popup-mode .fc-row{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}
+.popup-mode .fc-btn{min-width:0;width:100%;padding:10px 14px}
+.popup-mode .fc-btn.primary{padding:10px 14px}
+.popup-mode .focus-side{width:100% !important;border-left:none !important;border-top:1px solid var(--b1)}
+.popup-mode .focus-side-section{padding:14px 14px 0}
+.popup-mode .focus-side-section + .focus-side-section{padding-top:14px}
+
 @media (max-width: 850px) {
   .app { flex-direction: column; }
   .sidebar {
-    width: 100%; top: auto; bottom: 0; left: 0; height: 52px; 
-    border-right: none; border-top: 1px solid var(--b1);
-    flex-direction: row; justify-content: space-around; padding: 0;
+    position: sticky; top: 0; bottom: auto; left: 0; width: 100%; height: auto;
+    border-right: none; border-top: none; border-bottom: 1px solid var(--b1);
+    flex-direction: column; justify-content: flex-start; padding: 0;
+    background: rgba(7,8,13,0.98);
   }
-  .sidebar-logo, .nav-section, .sidebar-footer { display: none; }
+  .sidebar-logo { display: flex; padding: 14px 16px 8px; border-bottom: none; }
+  .nav-section, .sidebar-footer { display: none; }
   .nav {
-    flex-direction: row; width: 100%; padding: 0 10px; gap: 4px;
-    align-items: center; justify-content: space-around;
+    flex-direction: row; width: 100%; padding: 0 12px 10px; gap: 6px;
+    align-items: stretch; justify-content: flex-start; overflow-x: auto; overflow-y: hidden;
   }
   .nav-item {
-    flex-direction: column; align-items: center; gap: 2px; 
-    padding: 6px; font-size: 10px; border-radius: 4px; 
-    background: transparent !important; border: none !important;
+    position: relative; min-width: 84px; flex: 1;
+    flex-direction: column; align-items: flex-start; gap: 4px;
+    padding: 8px 10px; font-size: 10px; border-radius: 10px;
+    background: var(--s2) !important; border: 1px solid transparent !important;
   }
-  .nav-icon { font-size: 15px; margin-bottom: 2px; }
-  .nav-label { font-size: 10px; }
-  .nav-badge { position: absolute; top: 2px; right: 6px; font-size: 8px; padding: 1px 4px; }
+  .nav-item.active { background: var(--s3) !important; border-color: var(--b2) !important; }
+  .nav-icon { font-size: 13px; margin-bottom: 0; }
+  .nav-label { font-size: 10px; line-height: 1.2; }
+  .nav-badge { position: static; font-size: 8px; padding: 1px 4px; }
   
-  .content { margin-left: 0; padding-bottom: 56px; }
-  .page-hdr { padding: 0 16px; height: 48px; }
+  .content { margin-left: 0; min-height: 0; }
+  .page-hdr { padding: 12px 16px; height: auto; align-items: flex-start; justify-content: flex-start; gap: 8px; }
+  .page-title { font-size: 15px; }
+  .page-sub { display: none; }
   .page-body { padding: 14px; }
+  .panel-hd { padding: 12px 14px; align-items: flex-start; }
+  .panel-bd { padding: 14px; }
+  .search-wrap { width: 100% !important; }
+  .search-wrap .inp { width: 100%; }
+  .prio-group { flex-wrap: wrap; }
+  .prio-opt { min-width: 78px; }
+  .submit-btn { padding: 9px; }
+  .stat-card { padding: 10px 11px; }
+  .stat-icon { margin-bottom: 5px; }
+  .stat-val { font-size: 18px; }
+  .stat-lbl { font-size: 9px; }
+  .tiles { grid-template-columns: repeat(2, 1fr) !important; }
+  .tile { padding: 8px 10px; }
+  .tile-val { font-size: 15px; }
+  .empty { padding: 26px 16px; }
+  .group-div { margin: 10px 0 6px; }
+  .task { gap: 8px; padding: 10px 11px; }
+  .task:hover { transform: none; }
+  .task-name {
+    white-space: normal;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .task-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .task-meta { gap: 4px; }
+  .del-btn { opacity: 1; }
   
   /* Force single columns on grids with inline style dimensions */
   .page-body > div[style*="display: grid"],
@@ -224,11 +381,20 @@ textarea.inp{min-height:58px}
     grid-template-columns: 1fr !important;
   }
   .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
-  .focus-center { flex-direction: column; }
+  .focus-center { flex-direction: column; min-height: auto; }
+  .focus-main { padding: 28px 18px; }
+  .focus-ring-wrap { width: 210px; height: 210px; margin-bottom: 24px; }
+  .ring-time { font-size: 42px; }
+  .ring-session, .fc-hint { text-align: center; }
+  .fc-done { margin-bottom: 16px; padding: 8px 12px; font-size: 11px; text-align: center; }
+  .fc-row { width: 100%; justify-content: center; flex-wrap: wrap; }
+  .fc-btn { flex: 1; min-width: 120px; }
   .focus-side { width: 100% !important; border-left: none !important; border-top: 1px solid var(--b1); }
+  .focus-side-section { padding: 14px 14px 0; }
+  .focus-side-section + .focus-side-section { padding-top: 14px; }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 360px) {
   .stats-grid { grid-template-columns: 1fr !important; }
   .tiles { grid-template-columns: 1fr !important; }
 }
@@ -249,6 +415,12 @@ const PAGES = ["all","active","done","focus"];
    HOOKS
 ══════════════════════════════════════════════ */
 function useLS(key, init) {
+  const hasChromeStorage =
+    typeof chrome !== "undefined" &&
+    chrome?.storage?.local &&
+    typeof chrome.storage.local.get === "function" &&
+    typeof chrome.storage.local.set === "function";
+
   const [v, setV] = useState(() => {
     try {
       const s = localStorage.getItem(key);
@@ -259,11 +431,26 @@ function useLS(key, init) {
       return init;
     }
   });
+  useEffect(() => {
+    if (!hasChromeStorage) return;
+
+    chrome.storage.local.get([key], result => {
+      const stored = result?.[key];
+      if (stored !== undefined && stored !== null) {
+        setV(stored);
+      }
+    });
+  }, [hasChromeStorage, key]);
   const set = useCallback(fn => setV(prev => {
     const next = fn instanceof Function ? fn(prev) : fn;
-    try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+      if (hasChromeStorage) {
+        chrome.storage.local.set({ [key]: next });
+      }
+    } catch {}
     return next;
-  }), [key]);
+  }), [hasChromeStorage, key]);
   return [v, set];
 }
 
@@ -309,35 +496,116 @@ function MiniRing({ pct, color, size=64, sw=5, label, sub }) {
 
 function ActivityChart({ sessions, tasks, streak }) {
   const todayKey = new Date().toDateString();
+  const resolveTier = count => {
+    if (count >= 6) {
+      return {
+        background:"linear-gradient(180deg,#facc15,#f59e0b)",
+        glow:"0 0 18px rgba(250,204,21,0.55)",
+        text:"#facc15",
+        badgeBg:"rgba(250,204,21,0.12)",
+        badgeBorder:"rgba(250,204,21,0.28)",
+        badgeGlow:"0 0 14px rgba(250,204,21,0.22)",
+        label:"Legend run",
+      };
+    }
+    if (count === 5) {
+      return {
+        background:"linear-gradient(180deg,#a78bfa,#7c3aed)",
+        glow:"0 0 16px rgba(167,139,250,0.48)",
+        text:"var(--violet)",
+        badgeBg:"var(--violet-dim)",
+        badgeBorder:"rgba(167,139,250,0.24)",
+        badgeGlow:"0 0 12px rgba(167,139,250,0.18)",
+        label:"Crushing it",
+      };
+    }
+    if (count === 4) {
+      return {
+        background:"linear-gradient(180deg,#60a5fa,#2563eb)",
+        glow:"0 0 14px rgba(96,165,250,0.42)",
+        text:"var(--blue)",
+        badgeBg:"var(--blue-dim)",
+        badgeBorder:"rgba(96,165,250,0.24)",
+        badgeGlow:"0 0 10px rgba(96,165,250,0.16)",
+        label:"Level up",
+      };
+    }
+    if (count === 3) {
+      return {
+        background:"linear-gradient(180deg,#4ade80,#16a34a)",
+        glow:"0 0 12px rgba(74,222,128,0.38)",
+        text:"var(--green)",
+        badgeBg:"var(--green-dim)",
+        badgeBorder:"rgba(74,222,128,0.22)",
+        badgeGlow:"0 0 8px rgba(74,222,128,0.14)",
+        label:"Great pace",
+      };
+    }
+    if (count >= 1) {
+      return {
+        background:"linear-gradient(180deg,#f5a623,#e8912a)",
+        glow:"0 0 10px rgba(245,166,35,0.32)",
+        text:"var(--amber)",
+        badgeBg:"var(--amber-dim)",
+        badgeBorder:"rgba(245,166,35,0.22)",
+        badgeGlow:"0 0 7px rgba(245,166,35,0.12)",
+        label:"Nice start",
+      };
+    }
+    return {
+      background:"linear-gradient(180deg,rgba(200,210,255,0.22),rgba(200,210,255,0.08))",
+      glow:"none",
+      text:"var(--t3)",
+      badgeBg:"rgba(200,210,255,0.06)",
+      badgeBorder:"rgba(200,210,255,0.1)",
+      badgeGlow:"none",
+      label:"Ready to start",
+    };
+  };
+  void sessions;
   const last7 = Array.from({length:7}).map((_,i) => {
     const d=new Date(); d.setDate(d.getDate()-(6-i)); const key=d.toDateString();
     return {
       label: d.toLocaleDateString("en",{weekday:"short"}).slice(0,2).toUpperCase(),
-      n: sessions.filter(s=>new Date(s.date).toDateString()===key).length +
-         tasks.filter(t=>t.completedAt&&new Date(t.completedAt).toDateString()===key).length,
+      n: tasks.filter(t=>t.completedAt&&new Date(t.completedAt).toDateString()===key).length,
       today: key===todayKey,
     };
   });
   const maxBar = Math.max(...last7.map(d=>d.n), 1);
+  const todayData = last7.find(d=>d.today) || { n:0 };
+  const todayTier = resolveTier(todayData.n);
   return (
     <>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:9 }}>
-        <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--t3)", fontFamily:"var(--mono)" }}>Activity · 7 days</span>
-        {streak>0 && <span style={{ fontSize:11, color:"var(--amber)", fontFamily:"var(--mono)" }}>🔥 {streak}d</span>}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginBottom:8, flexWrap:"wrap" }}>
+        <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--t3)", fontFamily:"var(--mono)" }}>Activity - 7 days</span>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
+          <span style={{ fontSize:10, padding:"4px 9px", borderRadius:99, background:todayTier.badgeBg, border:`1px solid ${todayTier.badgeBorder}`, color:todayTier.text, boxShadow:todayTier.badgeGlow, fontFamily:"var(--mono)", fontWeight:700 }}>
+            {todayTier.label}
+          </span>
+          {streak>0 && <span style={{ fontSize:10, color:"var(--amber)", fontFamily:"var(--mono)" }}>{streak}d streak</span>}
+        </div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, gap:8 }}>
+        <span style={{ fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)" }}>Today completions</span>
+        <span style={{ fontSize:10, color:todayTier.text, fontFamily:"var(--mono)", fontWeight:700 }}>{todayData.n}</span>
       </div>
       <div className="chart-bars">
-        {last7.map((d,i) => (
-          <div key={i} className="bar-col">
-            <div className="bar-track">
-              <div className="bar" style={{
-                height:`${Math.max((d.n/maxBar)*100, d.n>0?10:0)}%`,
-                background: d.today ? "linear-gradient(180deg,var(--violet),var(--blue))" : "linear-gradient(180deg,rgba(167,139,250,0.5),rgba(167,139,250,0.2))",
-                animationDelay:`${i*45}ms`,
-              }}/>
+        {last7.map((d,i) => {
+          const tier = resolveTier(d.n);
+          return (
+            <div key={i} className="bar-col" title={`${d.n} task${d.n===1?"":"s"} completed`}>
+              <div className="bar-track" style={{ border:d.today?"1px solid rgba(238,240,248,0.16)":"1px solid transparent", boxShadow:d.today?"inset 0 0 0 1px rgba(238,240,248,0.04)":"none" }}>
+                <div className="bar" style={{
+                  height:`${Math.max((d.n/maxBar)*100, d.n>0?10:0)}%`,
+                  background:tier.background,
+                  boxShadow:tier.glow,
+                  animationDelay:`${i*45}ms`,
+                }}/>
+              </div>
+              <span className="bar-day" style={{ color:d.today?"var(--t1)":"var(--t3)", fontWeight:d.today?700:500 }}>{d.label}</span>
             </div>
-            <span className="bar-day" style={{ color:d.today?"var(--violet)":"var(--t3)" }}>{d.label}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );
@@ -525,9 +793,8 @@ function AllPage({ tasks, setTasks, sessions }) {
    PAGE: ACTIVE
 ══════════════════════════════════════════════ */
 function ActivePage({ tasks, setTasks, sessions }) {
-  const [search,setSearch]=useState(""), [prioF,setPrioF]=useState("all"), [showForm,setShowForm]=useState(true);
+  const [search,setSearch]=useState(""), [prioF,setPrioF]=useState("all");
   const [toast,showToast]=useToast();
-  const addTask=d=>{setTasks(t=>[...t,{id:Date.now().toString(),...d,status:"pending",createdAt:new Date().toISOString()}]);showToast("Task added ✦")};
   const complete=id=>{setTasks(t=>t.map(x=>x.id===id?{...x,status:"done",completedAt:new Date().toISOString()}:x));showToast("Done! ✓")};
   const remove=id=>{setTasks(t=>t.filter(x=>x.id!==id));showToast("Removed","#fb7185")};
   const allPending=tasks.filter(t=>t.status!=="done");
@@ -538,7 +805,6 @@ function ActivePage({ tasks, setTasks, sessions }) {
     <>
       <div className="page-hdr">
         <div style={{display:"flex",alignItems:"baseline",gap:7}}><span className="page-title">Active <em>Tasks</em></span><span className="page-sub">/ {allPending.length} pending</span></div>
-        <button onClick={()=>setShowForm(f=>!f)} style={{fontSize:11,color:"var(--t3)",background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:7,padding:"4px 11px",cursor:"pointer",fontFamily:"var(--mono)",transition:"all 0.2s"}}>{showForm?"hide form":"+ new task"}</button>
       </div>
       <div className="page-body">
         <div style={{display:"grid",gridTemplateColumns:"265px 1fr",gap:16,alignItems:"start"}}>
@@ -568,7 +834,6 @@ function ActivePage({ tasks, setTasks, sessions }) {
               <div className="panel-hd"><span className="panel-title">activity</span></div>
               <div className="panel-bd"><ActivityChart sessions={sessions} tasks={tasks} streak={streak}/></div>
             </div>
-            {showForm&&<div className="panel" style={{animationDelay:"65ms"}}><div className="panel-hd"><span className="panel-title">add task</span></div><div className="panel-bd"><TaskForm onSubmit={addTask}/></div></div>}
           </div>
           {/* Right */}
           <div className="panel" style={{animationDelay:"55ms"}}>
@@ -727,8 +992,9 @@ function FocusPage({ sessions, onAddSession, tasks }) {
         {/* Timer center */}
         <div className="focus-main">
           {done&&<div className="fc-done">✦ Session complete — 25 minutes logged</div>}
-          <div className="focus-ring-wrap">
-            <svg width="256" height="256" viewBox="0 0 256 256" style={{position:"absolute",inset:0}}>
+          <div className="focus-main-shell">
+            <div className="focus-ring-wrap">
+              <svg width="256" height="256" viewBox="0 0 256 256" style={{position:"absolute",inset:0}}>
               <defs><linearGradient id="rg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#a78bfa"/><stop offset="100%" stopColor="#60a5fa"/></linearGradient></defs>
               <g transform="rotate(-90 128 128)">
                 <circle cx="128" cy="128" r={r} fill="none" stroke="rgba(200,210,255,0.04)" strokeWidth="2"/>
@@ -743,12 +1009,13 @@ function FocusPage({ sessions, onAddSession, tasks }) {
               <div className="ring-session">session {todayN+(done?0:1)} · today</div>
             </div>
           </div>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,position:"relative",zIndex:1}}>
+          <div className="focus-controls">
             <div className="fc-row">
               <button className="fc-btn" onClick={reset}>↺ Reset</button>
               <button className="fc-btn primary" onClick={()=>{setDone(false);setRunning(o=>!o)}}>{running?"⏸ Pause":done?"▶ Again":"▶ Start"}</button>
             </div>
             <div className="fc-hint">{running?"Stay focused — timer is running":done?"Great work! Take a short break.":"25-minute deep work session"}</div>
+          </div>
           </div>
         </div>
         {/* Side panel */}
@@ -809,6 +1076,9 @@ export default function WorkZen() {
   const [sessions, setSessions] = useLS("wz_sessions", []);
   const [page,     setPage]     = useState("all");
   const addSession = useCallback(s=>setSessions(p=>[...p,s]),[setSessions]);
+  const isExtensionRuntime =
+    typeof window !== "undefined" &&
+    /extension:$/.test(window.location.protocol);
 
   const pendN   = tasks.filter(t=>t.status!=="done").length;
   const doneN   = tasks.filter(t=>t.status==="done").length;
@@ -825,7 +1095,8 @@ export default function WorkZen() {
   return (
     <>
       <style>{CSS}</style>
-      <div className="app">
+      <div className={`popup-stage ${isExtensionRuntime ? "extension-runtime" : "browser-preview"}`}>
+      <div className="app popup-mode">
         {/* Sidebar */}
         <nav className="sidebar">
           <div className="sidebar-logo">
@@ -842,7 +1113,7 @@ export default function WorkZen() {
               </button>
             ))}
           </div>
-          <div className="sidebar-footer"><span className="footer-dot"/>prototype · v0.1</div>
+          <div className="sidebar-footer"><span className="footer-dot"/>side panel · v0.1</div>
         </nav>
 
         {/* Content */}
@@ -852,6 +1123,7 @@ export default function WorkZen() {
           {page==="done"   && <DonePage   tasks={tasks} setTasks={setTasks} sessions={sessions}/>}
           {page==="focus"  && <FocusPage  sessions={sessions} onAddSession={addSession} tasks={tasks}/>}
         </div>
+      </div>
       </div>
     </>
   );

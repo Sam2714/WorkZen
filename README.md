@@ -82,4 +82,12 @@ npm start
 - Set `CLIENT_URL` for local CORS development if you use a custom frontend origin.
 - Set `DATA_FILE` if you want the JSON datastore in a different location.
 
+## Chrome Side Panel Extension
+
+- Local side panel preview: `npm --prefix frontend run dev`
+- Open the preview at `http://localhost:5173`
+- Build the extension bundle: `build-workzen-extension.bat`
+- Load `frontend/dist` as an unpacked extension in `chrome://extensions` or `edge://extensions`
+- Clicking the extension action opens WorkZen in the browser side panel
+
 WorkZen is not another to-do list. It is the layer between planning and doing.

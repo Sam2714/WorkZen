@@ -1,16 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "WorkZen",
+  "name": "WorkZen Side Panel",
+  "short_name": "WorkZen",
   "version": "1.0.0",
-  "description": "Adjustable Task Management & Focus Timer Dashboard.",
-  "permissions": ["storage"],
+  "description": "WorkZen side panel extension for tasks, focus sessions, and progress tracking.",
+  "permissions": ["storage", "sidePanel"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
-    "default_popup": "index.html",
-    "default_title": "WorkZen"
+    "default_title": "Open WorkZen side panel",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "index.html"
   },
   "icons": {
-    "16": "favicon.ico",
-    "48": "favicon.ico",
-    "128": "favicon.ico"
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   }
 }
