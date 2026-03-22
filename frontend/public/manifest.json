@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "WorkZen",
+  "version": "1.0.0",
+  "description": "Adjustable Task Management & Focus Timer Dashboard.",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "WorkZen"
+  },
+  "icons": {
+    "16": "favicon.ico",
+    "48": "favicon.ico",
+    "128": "favicon.ico"
+  }
+}

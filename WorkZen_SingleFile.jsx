@@ -192,46 +192,6 @@ textarea.inp{min-height:58px}
 .focus-side-section{padding:16px 16px 0}
 .focus-side-section + .focus-side-section{border-top:1px solid var(--b1);padding-top:16px}
 .focus-side-label{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--t3);font-family:var(--mono);margin-bottom:12px}
-
-@media (max-width: 850px) {
-  .app { flex-direction: column; }
-  .sidebar {
-    width: 100%; top: auto; bottom: 0; left: 0; height: 52px; 
-    border-right: none; border-top: 1px solid var(--b1);
-    flex-direction: row; justify-content: space-around; padding: 0;
-  }
-  .sidebar-logo, .nav-section, .sidebar-footer { display: none; }
-  .nav {
-    flex-direction: row; width: 100%; padding: 0 10px; gap: 4px;
-    align-items: center; justify-content: space-around;
-  }
-  .nav-item {
-    flex-direction: column; align-items: center; gap: 2px; 
-    padding: 6px; font-size: 10px; border-radius: 4px; 
-    background: transparent !important; border: none !important;
-  }
-  .nav-icon { font-size: 15px; margin-bottom: 2px; }
-  .nav-label { font-size: 10px; }
-  .nav-badge { position: absolute; top: 2px; right: 6px; font-size: 8px; padding: 1px 4px; }
-  
-  .content { margin-left: 0; padding-bottom: 56px; }
-  .page-hdr { padding: 0 16px; height: 48px; }
-  .page-body { padding: 14px; }
-  
-  /* Force single columns on grids with inline style dimensions */
-  .page-body > div[style*="display: grid"],
-  .page-body > div[style*="display:grid"] {
-    grid-template-columns: 1fr !important;
-  }
-  .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
-  .focus-center { flex-direction: column; }
-  .focus-side { width: 100% !important; border-left: none !important; border-top: 1px solid var(--b1); }
-}
-
-@media (max-width: 480px) {
-  .stats-grid { grid-template-columns: 1fr !important; }
-  .tiles { grid-template-columns: 1fr !important; }
-}
 `;
 
 /* ══════════════════════════════════════════════
@@ -250,14 +210,7 @@ const PAGES = ["all","active","done","focus"];
 ══════════════════════════════════════════════ */
 function useLS(key, init) {
   const [v, setV] = useState(() => {
-    try {
-      const s = localStorage.getItem(key);
-      if (!s || s === "undefined" || s === "null") return init;
-      const parsed = JSON.parse(s);
-      return (parsed === undefined || parsed === null) ? init : parsed;
-    } catch {
-      return init;
-    }
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init; } catch { return init; }
   });
   const set = useCallback(fn => setV(prev => {
     const next = fn instanceof Function ? fn(prev) : fn;
@@ -601,7 +554,7 @@ function ActivePage({ tasks, setTasks, sessions }) {
    PAGE: DONE
 ══════════════════════════════════════════════ */
 function DonePage({ tasks, setTasks, sessions }) {
-  const [search,setSearch]=useState(""), [toast,showToast]=useToast();
+  const [search,setSearch]=useState([]), [toast,showToast]=useToast();
   const restore=id=>{setTasks(t=>t.map(x=>x.id===id?{...x,status:"pending",completedAt:undefined}:x));showToast("Restored","#60a5fa")};
   const remove=id=>{setTasks(t=>t.filter(x=>x.id!==id));showToast("Removed","#fb7185")};
   const allDone=tasks.filter(t=>t.status==="done");
@@ -694,9 +647,9 @@ function FocusPage({ sessions, onAddSession, tasks }) {
   const [linked,setLinked]=useState(""), [notes,setNotes]=useState("");
   const iRef=useRef(null);
   const today=new Date().toDateString();
-  const todayN=sessions.filter(s=>s?.date && new Date(s.date).toDateString()===today).length;
+  const todayN=sessions.filter(s=>new Date(s.date).toDateString()===today).length;
   const totalMin=sessions.length*25;
-  const streak=useMemo(()=>{let s=0;for(let i=0;i<60;i++){const d=new Date();d.setDate(d.getDate()-i);if(sessions.some(x=>x?.date && new Date(x.date).toDateString()===d.toDateString()))s++;else break}return s},[sessions]);
+  const streak=useMemo(()=>{let s=0;for(let i=0;i<60;i++){const d=new Date();d.setDate(d.getDate()-i);if(sessions.some(x=>new Date(x.date).toDateString()===d.toDateString()))s++;else break}return s},[sessions]);
   useEffect(()=>{
     if(running){iRef.current=setInterval(()=>setRem(r=>{if(r<=1){clearInterval(iRef.current);setRunning(false);setDone(true);onAddSession({date:new Date().toISOString(),taskId:linked||null,notes});return 0}return r-1}),1000)}
     else clearInterval(iRef.current);
@@ -779,7 +732,7 @@ function FocusPage({ sessions, onAddSession, tasks }) {
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:7}}>
                 {recent.map((s,i)=>{
-                  const lt=s.taskId && Array.isArray(tasks) ? tasks.find(t=>t.id===s.taskId) : null;
+                  const lt=s.taskId?tasks.find(t=>t.id===s.taskId):null;
                   const d=new Date(s.date);
                   return(
                     <div key={i} style={{padding:"9px 11px",borderRadius:8,background:"var(--s2)",border:"1px solid var(--b1)",animation:`slideR 0.28s ease ${i*35}ms both`}}>
