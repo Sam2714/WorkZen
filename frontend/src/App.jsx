@@ -98,6 +98,7 @@ body{font-family:var(--sans);background:var(--s0);color:var(--t1);-webkit-font-s
 .nav-label{flex:1}
 .nav-badge{font-size:9px;font-family:var(--mono);font-weight:600;padding:2px 6px;border-radius:99px;background:var(--s5);color:var(--t3)}
 .nav-badge.amber{background:var(--amber-dim);color:var(--amber)}
+.nav-badge.blue{background:var(--blue-dim);color:var(--blue)}
 .nav-badge.green{background:var(--green-dim);color:var(--green)}
 .nav-badge.violet{background:var(--violet-dim);color:var(--violet)}
 .sidebar-footer{padding:12px 14px;border-top:1px solid var(--b1);font-size:10px;color:var(--t3);font-family:var(--mono);display:flex;align-items:center;gap:6px}
@@ -409,7 +410,191 @@ const P = {
   low:    { color:"#4ade80", bg:"rgba(74,222,128,0.1)",   border:"rgba(74,222,128,0.28)"  },
 };
 const FOCUS_TOTAL = 25 * 60;
-const PAGES = ["all","active","done","focus"];
+const FOCUS_TOTAL_MS = FOCUS_TOTAL * 1000;
+const FOCUS_STORAGE_KEY = "wz_focus_state";
+const SETTINGS_STORAGE_KEY = "wz_settings";
+const LOGS_STORAGE_KEY = "wz_activity_logs";
+const EMPTY_FOCUS_STATE = {
+  status:"idle",
+  startedAt:null,
+  endsAt:null,
+  remainingMs:FOCUS_TOTAL_MS,
+  taskId:"",
+  notes:"",
+  sessionId:null,
+  completedAt:null,
+  sessionLoggedAt:null,
+};
+const DEFAULT_SETTINGS = {
+  notifications: {
+    focusStart: false,
+    focusPause: false,
+    focusComplete: true,
+    badgePulse: true,
+  },
+  ai: {
+    smartPriority: true,
+    voiceCapture: true,
+  },
+};
+const PAGES = ["all","active","observability","done","focus"];
+
+function normalizeSettings(value) {
+  const settings = value && typeof value === "object" ? value : {};
+  return {
+    notifications: {
+      ...DEFAULT_SETTINGS.notifications,
+      ...(settings.notifications || {}),
+    },
+    ai: {
+      ...DEFAULT_SETTINGS.ai,
+      ...(settings.ai || {}),
+    },
+  };
+}
+
+function createLogEntry(kind, message, details = {}) {
+  return {
+    id: details.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    kind,
+    message,
+    createdAt: details.createdAt || new Date().toISOString(),
+    ...details,
+  };
+}
+
+function getRelativeTimeLabel(value) {
+  const stamp = new Date(value).getTime();
+  if (!Number.isFinite(stamp)) return "now";
+  const diff = Date.now() - stamp;
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return `${Math.max(1, Math.floor(diff / 60000))}m ago`;
+  if (diff < 86400000) return `${Math.max(1, Math.floor(diff / 3600000))}h ago`;
+  return `${Math.max(1, Math.floor(diff / 86400000))}d ago`;
+}
+
+function getLogAppearance(kind = "") {
+  if (kind.startsWith("focus")) {
+    return { label:"Focus", color:"var(--violet)", bg:"var(--violet-dim)", border:"rgba(167,139,250,0.22)" };
+  }
+  if (kind.startsWith("ai")) {
+    return { label:"AI", color:"var(--blue)", bg:"var(--blue-dim)", border:"rgba(96,165,250,0.22)" };
+  }
+  if (kind.startsWith("settings")) {
+    return { label:"Setting", color:"var(--blue)", bg:"rgba(96,165,250,0.08)", border:"rgba(96,165,250,0.2)" };
+  }
+  if (kind.includes("delete")) {
+    return { label:"Removed", color:"var(--red)", bg:"var(--red-dim)", border:"rgba(251,113,133,0.22)" };
+  }
+  if (kind.includes("complete") || kind.includes("restore")) {
+    return { label:"Status", color:"var(--green)", bg:"var(--green-dim)", border:"rgba(74,222,128,0.2)" };
+  }
+  return { label:"Task", color:"var(--amber)", bg:"var(--amber-dim)", border:"rgba(245,166,35,0.2)" };
+}
+
+function getSpeechRecognitionCtor() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function buildTaskFromAgentPrompt(prompt, settings) {
+  const raw = String(prompt || "").trim();
+  if (!raw) return null;
+
+  const smartPriority = normalizeSettings(settings).ai.smartPriority;
+  let priority = "medium";
+  if (smartPriority) {
+    if (/\b(high|urgent|asap|critical)\b/i.test(raw)) priority = "high";
+    else if (/\b(low|later|backlog|someday)\b/i.test(raw)) priority = "low";
+  }
+
+  const explicitPriority = raw.match(/\bpriority\s*[:=-]?\s*(high|medium|low)\b/i);
+  if (explicitPriority) priority = explicitPriority[1].toLowerCase();
+
+  let cleaned = raw
+    .replace(/^(please\s+)?(add|create|make)\s+(a\s+)?(task|todo)\s*/i, "")
+    .replace(/\bpriority\s*[:=-]?\s*(high|medium|low)\b/ig, "")
+    .replace(/\b(high|urgent|asap|critical|low|later|backlog|someday)\s+priority\b/ig, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  let title = cleaned;
+  let description = "";
+
+  const noteMatch = cleaned.match(/\b(?:notes?|about|because|details?)\s*[:=-]?\s*(.+)$/i);
+  if (noteMatch) {
+    description = noteMatch[1].trim();
+    title = cleaned.slice(0, noteMatch.index).trim();
+  }
+
+  if (title.includes("|")) {
+    const [maybeTitle, maybeNotes] = title.split("|");
+    title = (maybeTitle || "").trim();
+    description = description || (maybeNotes || "").trim();
+  }
+
+  const normalizedTitle = title.replace(/^[,.\-:;\s]+|[,.\-:;\s]+$/g, "");
+  title = normalizedTitle || raw;
+
+  if (!description && title.split(" ").length > 9) {
+    const words = title.split(" ");
+    description = words.slice(6).join(" ");
+    title = words.slice(0, 6).join(" ");
+  }
+
+  return {
+    title: title.charAt(0).toUpperCase() + title.slice(1),
+    description,
+    priority,
+  };
+}
+
+function buildObservabilityActions(tasks, sessions, logs) {
+  const pending = tasks.filter(task => task.status !== "done");
+  const todayKey = new Date().toDateString();
+  const todaySessions = sessions.filter(session => new Date(session.date).toDateString() === todayKey).length;
+  const highPriority = pending.filter(task => task.priority === "high");
+  const stalePending = pending.filter(task => {
+    const createdAt = new Date(task.createdAt || 0).getTime();
+    return Number.isFinite(createdAt) && Date.now() - createdAt > 1000 * 60 * 60 * 48;
+  });
+  const recentAdds = logs.filter(log => log.kind === "task_created" && Date.now() - new Date(log.createdAt).getTime() < 1000 * 60 * 60 * 12).length;
+
+  const actions = [];
+  if (highPriority.length >= 2) {
+    actions.push({
+      id: "obs-clear-high",
+      title: "Clear the high-priority queue",
+      description: `${highPriority.length} high-priority tasks are still open.`,
+      priority: "high",
+    });
+  }
+  if (pending.length > 0 && todaySessions === 0) {
+    actions.push({
+      id: "obs-focus-block",
+      title: "Plan a 25-minute focus block",
+      description: "Tasks are pending and no focus session has been logged today.",
+      priority: "medium",
+    });
+  }
+  if (stalePending.length > 0) {
+    actions.push({
+      id: "obs-stale-followup",
+      title: `Follow up on ${stalePending[0].title}`,
+      description: `${stalePending.length} pending task${stalePending.length !== 1 ? "s are" : " is"} older than 48 hours.`,
+      priority: "medium",
+    });
+  }
+  if (recentAdds >= 3) {
+    actions.push({
+      id: "obs-backlog-review",
+      title: "Review new tasks and trim backlog",
+      description: `${recentAdds} tasks were added recently. A quick review can keep the list sharp.`,
+      priority: "low",
+    });
+  }
+  return actions.slice(0, 4);
+}
 
 /* ══════════════════════════════════════════════
    HOOKS
@@ -437,9 +622,28 @@ function useLS(key, init) {
     chrome.storage.local.get([key], result => {
       const stored = result?.[key];
       if (stored !== undefined && stored !== null) {
+        try {
+          localStorage.setItem(key, JSON.stringify(stored));
+        } catch {}
         setV(stored);
       }
     });
+  }, [hasChromeStorage, key]);
+  useEffect(() => {
+    if (!hasChromeStorage || !chrome?.storage?.onChanged) return;
+
+    const handleChanges = (changes, areaName) => {
+      if (areaName !== "local" || !changes[key]) return;
+      const next = changes[key].newValue;
+      if (next === undefined || next === null) return;
+      try {
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch {}
+      setV(next);
+    };
+
+    chrome.storage.onChanged.addListener(handleChanges);
+    return () => chrome.storage.onChanged.removeListener(handleChanges);
   }, [hasChromeStorage, key]);
   const set = useCallback(fn => setV(prev => {
     const next = fn instanceof Function ? fn(prev) : fn;
@@ -693,10 +897,263 @@ function TaskForm({ onSubmit, editTask, onCancel }) {
   );
 }
 
+function ToggleRow({ label, hint, checked, onChange, accent = "var(--violet)" }) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      style={{
+        width:"100%",
+        display:"flex",
+        alignItems:"center",
+        justifyContent:"space-between",
+        gap:12,
+        padding:"10px 12px",
+        marginBottom:8,
+        borderRadius:10,
+        border:`1px solid ${checked ? accent : "var(--b1)"}`,
+        background:checked ? "rgba(255,255,255,0.04)" : "var(--s2)",
+        color:"var(--t1)",
+        cursor:"pointer",
+        textAlign:"left",
+      }}
+    >
+      <div style={{ minWidth:0 }}>
+        <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+        <div style={{ fontSize:10, color:"var(--t3)", marginTop:2, lineHeight:1.45 }}>{hint}</div>
+      </div>
+      <div
+        style={{
+          width:40,
+          height:22,
+          borderRadius:99,
+          background:checked ? accent : "var(--s4)",
+          padding:2,
+          transition:"all 0.2s",
+          flexShrink:0,
+        }}
+      >
+        <div
+          style={{
+            width:18,
+            height:18,
+            borderRadius:"50%",
+            background:"#fff",
+            transform:checked ? "translateX(18px)" : "translateX(0)",
+            transition:"transform 0.2s",
+            boxShadow:"0 2px 10px rgba(0,0,0,0.3)",
+          }}
+        />
+      </div>
+    </button>
+  );
+}
+
+function LogFeed({ logs, emptyTitle = "No activity yet", emptySub = "The latest app events will appear here." }) {
+  if (!logs.length) {
+    return (
+      <div className="empty" style={{ padding:"24px 16px" }}>
+        <div className="empty-icon">LOG</div>
+        <div className="empty-title">{emptyTitle}</div>
+        <div className="empty-sub">{emptySub}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {logs.map(log => {
+        const tone = getLogAppearance(log.kind);
+        return (
+          <div
+            key={log.id}
+            style={{
+              padding:"10px 12px",
+              borderRadius:10,
+              border:`1px solid ${tone.border}`,
+              background:"var(--s2)",
+              display:"flex",
+              alignItems:"flex-start",
+              justifyContent:"space-between",
+              gap:12,
+            }}
+          >
+            <div style={{ minWidth:0, flex:1 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                <span
+                  style={{
+                    fontSize:9,
+                    fontFamily:"var(--mono)",
+                    padding:"2px 6px",
+                    borderRadius:99,
+                    background:tone.bg,
+                    color:tone.color,
+                    border:`1px solid ${tone.border}`,
+                    textTransform:"uppercase",
+                    letterSpacing:"0.08em",
+                    fontWeight:700,
+                  }}
+                >
+                  {tone.label}
+                </span>
+                {log.taskTitle && (
+                  <span style={{ fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)" }}>
+                    {log.taskTitle}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize:12, lineHeight:1.5 }}>{log.message}</div>
+            </div>
+            <div style={{ fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", flexShrink:0 }}>
+              {getRelativeTimeLabel(log.createdAt)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgentTaskPanel({ onCreateTask, settings }) {
+  const [agentInput, setAgentInput] = useState("");
+  const [messages, setMessages] = useState([
+    {
+      id: "intro",
+      role: "assistant",
+      text: "Describe a task naturally and I will turn it into a task with title, notes, and priority.",
+    },
+  ]);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const recognitionCtor = getSpeechRecognitionCtor();
+  const voiceEnabled = normalizeSettings(settings).ai.voiceCapture;
+
+  useEffect(() => () => recognitionRef.current?.stop?.(), []);
+
+  const submitPrompt = useCallback((prompt, source = "chat") => {
+    const parsed = buildTaskFromAgentPrompt(prompt, settings);
+    if (!parsed) return;
+
+    setMessages(prev => [
+      ...prev.slice(-5),
+      { id:`user-${Date.now()}`, role:"user", text:prompt },
+      {
+        id:`assistant-${Date.now()}-${source}`,
+        role:"assistant",
+        text:`Created "${parsed.title}" as a ${parsed.priority} priority task.`,
+      },
+    ]);
+    onCreateTask(parsed, { source:source === "voice" ? "ai-voice" : "ai-chat" });
+    setAgentInput("");
+  }, [onCreateTask, settings]);
+
+  const handleVoiceCapture = () => {
+    if (!voiceEnabled) return;
+    if (!recognitionCtor) return;
+
+    const recognition = new recognitionCtor();
+    recognition.lang = "en-IN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => setListening(true);
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.onresult = event => {
+      const transcript = Array.from(event.results || [])
+        .map(result => result?.[0]?.transcript || "")
+        .join(" ")
+        .trim();
+      if (!transcript) return;
+      setAgentInput(transcript);
+      submitPrompt(transcript, "voice");
+    };
+
+    recognition.start();
+  };
+
+  return (
+    <div className="panel" style={{ animationDelay:"18ms" }}>
+      <div className="panel-hd">
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span className="panel-title">AI task agent</span>
+          <span style={{ fontSize:9, padding:"2px 6px", borderRadius:99, background:"var(--blue-dim)", color:"var(--blue)", fontFamily:"var(--mono)", fontWeight:700 }}>
+            chat + voice
+          </span>
+        </div>
+      </div>
+      <div className="panel-bd">
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
+          {messages.slice(-4).map(message => (
+            <div
+              key={message.id}
+              style={{
+                alignSelf:message.role === "user" ? "flex-end" : "stretch",
+                background:message.role === "user" ? "rgba(167,139,250,0.14)" : "var(--s2)",
+                border:`1px solid ${message.role === "user" ? "rgba(167,139,250,0.24)" : "var(--b1)"}`,
+                borderRadius:12,
+                padding:"10px 12px",
+                fontSize:12,
+                lineHeight:1.5,
+              }}
+            >
+              {message.text}
+            </div>
+          ))}
+        </div>
+
+        <div className="field">
+          <label className="field-label">Agent prompt</label>
+          <textarea
+            className="inp"
+            value={agentInput}
+            onChange={event => setAgentInput(event.target.value)}
+            placeholder="Example: add a high priority task to finish the extension publish checklist, notes: verify screenshots and manifest"
+            style={{ minHeight:74 }}
+          />
+        </div>
+
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button
+            className="submit-btn"
+            style={{ flex:1, background:"linear-gradient(135deg,var(--blue),var(--violet))", boxShadow:"0 4px 18px rgba(96,165,250,0.24)" }}
+            onClick={() => submitPrompt(agentInput, "chat")}
+          >
+            Add with AI
+          </button>
+          <button
+            type="button"
+            className="fc-btn"
+            onClick={handleVoiceCapture}
+            disabled={!voiceEnabled || !recognitionCtor}
+            style={{
+              minHeight:40,
+              minWidth:96,
+              opacity:voiceEnabled && recognitionCtor ? 1 : 0.55,
+              borderColor:listening ? "rgba(74,222,128,0.35)" : "var(--b1)",
+              color:listening ? "var(--green)" : "var(--t2)",
+            }}
+          >
+            {listening ? "Listening" : "Voice"}
+          </button>
+        </div>
+        <div style={{ marginTop:8, fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", lineHeight:1.5 }}>
+          {recognitionCtor
+            ? voiceEnabled
+              ? "Voice capture listens once and turns the transcript into a task."
+              : "Voice capture is turned off in settings."
+            : "Voice capture is not available in this browser surface."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════
    PAGE: ALL
 ══════════════════════════════════════════════ */
-function AllPage({ tasks, setTasks, sessions }) {
+function AllPage({ tasks, setTasks, sessions, onLog, settings }) {
   const [editId,setEditId] = useState(null);
   const [search,setSearch] = useState("");
   const [toast,showToast] = useToast();
@@ -705,6 +1162,46 @@ function AllPage({ tasks, setTasks, sessions }) {
   const updateTask = d => { setTasks(t=>t.map(x=>x.id===editId?{...x,...d}:x)); setEditId(null); showToast("Updated","#60a5fa"); };
   const toggle = id => setTasks(t=>t.map(x=>x.id===id?{...x,status:x.status==="done"?"pending":"done",completedAt:x.status!=="done"?new Date().toISOString():undefined}:x));
   const remove = id => { setTasks(t=>t.filter(x=>x.id!==id)); showToast("Removed","#fb7185"); };
+  const handleTaskCreate = useCallback((data, meta = { source:"manual" }) => {
+    const task = { id:Date.now().toString(), ...data, status:"pending", createdAt:new Date().toISOString() };
+    setTasks(list => [...list, task]);
+    onLog(
+      meta.source === "ai-chat" || meta.source === "ai-voice" ? "ai_task_created" : "task_created",
+      meta.source === "ai-voice"
+        ? `Voice agent added "${task.title}".`
+        : meta.source === "ai-chat"
+          ? `AI agent added "${task.title}".`
+          : `Added task "${task.title}".`,
+      { taskId:task.id, taskTitle:task.title, priority:task.priority, source:meta.source },
+    );
+    showToast(meta.source?.startsWith("ai-") ? "AI task ready" : "Task added");
+  }, [onLog, setTasks, showToast]);
+  const handleTaskUpdate = useCallback(data => {
+    const current = tasks.find(task => task.id === editId);
+    updateTask(data);
+    if (current) {
+      onLog("task_updated", `Updated "${current.title}".`, { taskId:current.id, taskTitle:data.title || current.title });
+    }
+  }, [editId, onLog, tasks, updateTask]);
+  const handleTaskToggle = useCallback(id => {
+    const current = tasks.find(task => task.id === id);
+    const nextDone = current?.status !== "done";
+    toggle(id);
+    if (current) {
+      onLog(
+        nextDone ? "task_completed" : "task_restored",
+        nextDone ? `Completed "${current.title}".` : `Moved "${current.title}" back to active.`,
+        { taskId:current.id, taskTitle:current.title },
+      );
+    }
+  }, [onLog, tasks, toggle]);
+  const handleTaskRemove = useCallback(id => {
+    const current = tasks.find(task => task.id === id);
+    remove(id);
+    if (current) {
+      onLog("task_deleted", `Removed "${current.title}".`, { taskId:current.id, taskTitle:current.title });
+    }
+  }, [onLog, remove, tasks]);
 
   const total=tasks.length, doneN=tasks.filter(t=>t.status==="done").length, pendN=total-doneN;
   const rate=total?Math.round((doneN/total)*100):0;
@@ -732,9 +1229,10 @@ function AllPage({ tasks, setTasks, sessions }) {
             <div className="panel">
               <div className="panel-hd"><span className="panel-title">{editId?"editing":"new task"}</span></div>
               <div className="panel-bd">
-                <TaskForm key={editId||"new"} editTask={editTask} onSubmit={editId?updateTask:addTask} onCancel={editId?()=>setEditId(null):undefined}/>
+                <TaskForm key={editId||"new"} editTask={editTask} onSubmit={editId?handleTaskUpdate:handleTaskCreate} onCancel={editId?()=>setEditId(null):undefined}/>
               </div>
             </div>
+            <AgentTaskPanel onCreateTask={handleTaskCreate} settings={settings} />
             <div className="panel" style={{animationDelay:"45ms"}}>
               <div className="panel-hd"><span className="panel-title">insights</span></div>
               <div className="panel-bd">
@@ -778,8 +1276,8 @@ function AllPage({ tasks, setTasks, sessions }) {
                 ))}
               </div>
               {filtered.length===0&&<div className="empty"><div className="empty-icon">{search?"⌕":"◫"}</div><div className="empty-title">{search?"No tasks match":"No tasks yet"}</div><div className="empty-sub">{search?"Try another keyword":"Add your first task"}</div></div>}
-              {pending.length>0&&<><div className="group-div">Active · {pending.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{pending.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>toggle(t.id)} onDelete={()=>remove(t.id)} onEdit={()=>setEditId(t.id)}/>)}</div></>}
-              {completed.length>0&&<><div className="group-div" style={{marginTop:14}}>Completed · {completed.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{completed.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>toggle(t.id)} onDelete={()=>remove(t.id)}/>)}</div></>}
+              {pending.length>0&&<><div className="group-div">Active · {pending.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{pending.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>handleTaskToggle(t.id)} onDelete={()=>handleTaskRemove(t.id)} onEdit={()=>setEditId(t.id)}/>)}</div></>}
+              {completed.length>0&&<><div className="group-div" style={{marginTop:14}}>Completed · {completed.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{completed.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>handleTaskToggle(t.id)} onDelete={()=>handleTaskRemove(t.id)}/>)}</div></>}
             </div>
           </div>
         </div>
@@ -792,15 +1290,33 @@ function AllPage({ tasks, setTasks, sessions }) {
 /* ══════════════════════════════════════════════
    PAGE: ACTIVE
 ══════════════════════════════════════════════ */
-function ActivePage({ tasks, setTasks, sessions }) {
+function ActivePage({ tasks, setTasks, sessions, logs, onLog }) {
   const [search,setSearch]=useState(""), [prioF,setPrioF]=useState("all");
   const [toast,showToast]=useToast();
   const complete=id=>{setTasks(t=>t.map(x=>x.id===id?{...x,status:"done",completedAt:new Date().toISOString()}:x));showToast("Done! ✓")};
   const remove=id=>{setTasks(t=>t.filter(x=>x.id!==id));showToast("Removed","#fb7185")};
+  const handleComplete = useCallback(id => {
+    const current = tasks.find(task => task.id === id);
+    complete(id);
+    if (current) {
+      onLog("task_completed", `Completed "${current.title}" from Active Tasks.`, { taskId:current.id, taskTitle:current.title });
+    }
+  }, [complete, onLog, tasks]);
+  const handleRemove = useCallback(id => {
+    const current = tasks.find(task => task.id === id);
+    remove(id);
+    if (current) {
+      onLog("task_deleted", `Removed "${current.title}" from Active Tasks.`, { taskId:current.id, taskTitle:current.title });
+    }
+  }, [onLog, remove, tasks]);
   const allPending=tasks.filter(t=>t.status!=="done");
   const filtered=useMemo(()=>allPending.filter(t=>{const bs=t.title.toLowerCase().includes(search.toLowerCase());const bp=prioF==="all"||t.priority===prioF;return bs&&bp}).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]||1)-({high:0,medium:1,low:2}[b.priority]||1)),[allPending,search,prioF]);
   const highN=allPending.filter(t=>t.priority==="high").length, medN=allPending.filter(t=>t.priority==="medium").length, lowN=allPending.filter(t=>t.priority==="low").length;
   const streak=useMemo(()=>{let s=0;for(let i=0;i<60;i++){const d=new Date();d.setDate(d.getDate()-i);const k=d.toDateString();if(sessions.some(x=>new Date(x.date).toDateString()===k)||tasks.some(x=>x.completedAt&&new Date(x.completedAt).toDateString()===k))s++;else break}return s},[sessions,tasks]);
+  const recentActiveLogs=useMemo(()=>{
+    const pendingIds=new Set(allPending.map(task=>task.id));
+    return logs.filter(log=>log.taskId ? pendingIds.has(log.taskId) : log.kind.startsWith("task") || log.kind.startsWith("ai")).slice(0,6);
+  },[allPending,logs]);
   return (
     <>
       <div className="page-hdr">
@@ -834,6 +1350,12 @@ function ActivePage({ tasks, setTasks, sessions }) {
               <div className="panel-hd"><span className="panel-title">activity</span></div>
               <div className="panel-bd"><ActivityChart sessions={sessions} tasks={tasks} streak={streak}/></div>
             </div>
+            <div className="panel" style={{animationDelay:"70ms"}}>
+              <div className="panel-hd"><span className="panel-title">tracking log</span></div>
+              <div className="panel-bd">
+                <LogFeed logs={recentActiveLogs} emptyTitle="No active task events" emptySub="Task changes from the active workflow will appear here." />
+              </div>
+            </div>
           </div>
           {/* Right */}
           <div className="panel" style={{animationDelay:"55ms"}}>
@@ -851,7 +1373,7 @@ function ActivePage({ tasks, setTasks, sessions }) {
               {["high","medium","low"].map(pk=>{
                 const g=filtered.filter(t=>t.priority===pk); if(!g.length)return null;
                 const col={high:"#fb7185",medium:"var(--amber)",low:"var(--green)"}[pk];
-                return <div key={pk}><div className="group-div" style={{color:col}}>{pk} · {g.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{g.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>complete(t.id)} onDelete={()=>remove(t.id)}/>)}</div></div>;
+                return <div key={pk}><div className="group-div" style={{color:col}}>{pk} · {g.length}</div><div style={{display:"flex",flexDirection:"column",gap:6}}>{g.map((t,i)=><TaskRow key={t.id} task={t} idx={i} onToggle={()=>handleComplete(t.id)} onDelete={()=>handleRemove(t.id)}/>)}</div></div>;
               })}
             </div>
           </div>
@@ -865,6 +1387,178 @@ function ActivePage({ tasks, setTasks, sessions }) {
 /* ══════════════════════════════════════════════
    PAGE: DONE
 ══════════════════════════════════════════════ */
+function ObservabilityPage({ tasks, setTasks, sessions, logs, onLog, settings }) {
+  const [filter, setFilter] = useState("all");
+  const [toast, showToast] = useToast();
+  const pending = tasks.filter(task => task.status !== "done");
+  const completed = tasks.filter(task => task.status === "done");
+  const todayKey = new Date().toDateString();
+  const highPriority = pending.filter(task => task.priority === "high");
+  const todaySessions = sessions.filter(session => new Date(session.date).toDateString() === todayKey).length;
+  const todayLogs = logs.filter(log => new Date(log.createdAt).toDateString() === todayKey).length;
+  const completionRate = tasks.length ? Math.round((completed.length / tasks.length) * 100) : 0;
+  const autoActions = useMemo(() => buildObservabilityActions(tasks, sessions, logs), [logs, sessions, tasks]);
+  const prefs = normalizeSettings(settings);
+  const observations = [
+    {
+      label: "Queue pressure",
+      value: pending.length === 0 ? "Calm" : pending.length <= 3 ? "Stable" : "Busy",
+      sub: pending.length === 0 ? "No pending tasks right now." : `${pending.length} pending, ${highPriority.length} high priority.`,
+      color: pending.length > 3 ? "var(--amber)" : "var(--green)",
+    },
+    {
+      label: "Focus coverage",
+      value: todaySessions > 0 ? "Covered" : "Missing",
+      sub: todaySessions > 0 ? `${todaySessions} session${todaySessions !== 1 ? "s" : ""} logged today.` : "No focus session has been logged today yet.",
+      color: todaySessions > 0 ? "var(--violet)" : "var(--amber)",
+    },
+    {
+      label: "Signals",
+      value: `${todayLogs} events`,
+      sub: todayLogs > 0 ? "Tasks, focus, and settings changes are being tracked." : "No tracked events yet today.",
+      color: "var(--blue)",
+    },
+  ];
+  const filteredLogs = useMemo(() => {
+    if (filter === "tasks") return logs.filter(log => log.kind.startsWith("task"));
+    if (filter === "focus") return logs.filter(log => log.kind.startsWith("focus"));
+    if (filter === "ai") return logs.filter(log => log.kind.startsWith("ai"));
+    if (filter === "settings") return logs.filter(log => log.kind.startsWith("settings"));
+    return logs;
+  }, [filter, logs]);
+
+  const createAutoAction = action => {
+    const exists = tasks.some(task => task.status !== "done" && task.title.toLowerCase() === action.title.toLowerCase());
+    if (exists) {
+      showToast("That task already exists", "#60a5fa");
+      return;
+    }
+    const task = {
+      id: Date.now().toString(),
+      title: action.title,
+      description: action.description,
+      priority: action.priority,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    setTasks(current => [task, ...current]);
+    onLog("task_created", `Observability created "${task.title}".`, { taskId:task.id, taskTitle:task.title, source:"observability" });
+    showToast("Observability task added", "#60a5fa");
+  };
+
+  return (
+    <>
+      <div className="page-hdr">
+        <div style={{display:"flex",alignItems:"baseline",gap:7}}>
+          <span className="page-title">Observ<em>ability</em></span>
+          <span className="page-sub">/ automatic task signals</span>
+        </div>
+        <span style={{fontSize:11,color:"var(--t3)",fontFamily:"var(--mono)"}}>{todayLogs} events today</span>
+      </div>
+      <div className="page-body">
+        <div style={{display:"grid",gridTemplateColumns:"265px 1fr",gap:16,alignItems:"start"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div className="panel">
+              <div className="panel-hd"><span className="panel-title">system snapshot</span></div>
+              <div className="panel-bd">
+                <div className="tiles" style={{marginBottom:12}}>
+                  {[{l:"Pending",v:pending.length,c:"var(--amber)"},{l:"Done",v:completed.length,c:"var(--green)"},{l:"Rate",v:`${completionRate}%`,c:"var(--blue)"},{l:"Logs",v:todayLogs,c:"var(--violet)"}].map((item,index)=>(
+                    <div key={index} className="tile"><div className="tile-lbl">{item.l}</div><div className="tile-val" style={{color:item.c}}>{item.v}</div></div>
+                  ))}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                  {observations.map(observation => (
+                    <div key={observation.label} style={{padding:"10px 12px",borderRadius:10,border:"1px solid var(--b1)",background:"var(--s2)"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:4}}>
+                        <span style={{fontSize:10,color:"var(--t3)",fontFamily:"var(--mono)",textTransform:"uppercase",letterSpacing:"0.08em"}}>{observation.label}</span>
+                        <span style={{fontSize:12,fontWeight:700,color:observation.color}}>{observation.value}</span>
+                      </div>
+                      <div style={{fontSize:11,color:"var(--t2)",lineHeight:1.45}}>{observation.sub}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="panel" style={{animationDelay:"28ms"}}>
+              <div className="panel-hd"><span className="panel-title">focus settings</span></div>
+              <div className="panel-bd">
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {[
+                    { label:"Start notice", value:prefs.notifications.focusStart ? "on" : "off" },
+                    { label:"Pause notice", value:prefs.notifications.focusPause ? "on" : "off" },
+                    { label:"Complete popup", value:prefs.notifications.focusComplete ? "on" : "off" },
+                    { label:"Toolbar blink", value:prefs.notifications.badgePulse ? "on" : "off" },
+                  ].map(item => (
+                    <div key={item.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid var(--b1)"}}>
+                      <span style={{fontSize:12,color:"var(--t2)"}}>{item.label}</span>
+                      <span style={{fontSize:10,color:item.value === "on" ? "var(--green)" : "var(--t3)",fontFamily:"var(--mono)",textTransform:"uppercase"}}>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div className="panel" style={{animationDelay:"46ms"}}>
+              <div className="panel-hd">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span className="panel-title">automatic tasks</span>
+                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:99,background:"var(--blue-dim)",color:"var(--blue)",fontFamily:"var(--mono)",fontWeight:700}}>{autoActions.length}</span>
+                </div>
+              </div>
+              <div className="panel-bd">
+                {autoActions.length === 0 ? (
+                  <div className="empty">
+                    <div className="empty-icon">OBS</div>
+                    <div className="empty-title">No follow-up task needed</div>
+                    <div className="empty-sub">The current workload looks healthy, so observability is not suggesting a task right now.</div>
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {autoActions.map(action => (
+                      <div key={action.id} style={{padding:"12px 13px",borderRadius:12,border:"1px solid var(--b1)",background:"var(--s2)"}}>
+                        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,marginBottom:6}}>
+                          <div>
+                            <div style={{fontSize:13,fontWeight:700,marginBottom:3}}>{action.title}</div>
+                            <div style={{fontSize:11,color:"var(--t2)",lineHeight:1.5}}>{action.description}</div>
+                          </div>
+                          <span style={{fontSize:9,padding:"2px 6px",borderRadius:99,border:`1px solid ${P[action.priority].border}`,background:P[action.priority].bg,color:P[action.priority].color,fontFamily:"var(--mono)",textTransform:"uppercase",fontWeight:700}}>{action.priority}</span>
+                        </div>
+                        <button className="submit-btn" style={{padding:"8px 10px"}} onClick={() => createAutoAction(action)}>
+                          Create task
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="panel" style={{animationDelay:"64ms"}}>
+              <div className="panel-hd">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span className="panel-title">activity feed</span>
+                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:99,background:"var(--s3)",color:"var(--t3)",fontFamily:"var(--mono)",fontWeight:700}}>{filteredLogs.length}</span>
+                </div>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {[{id:"all",label:"All"},{id:"tasks",label:"Tasks"},{id:"focus",label:"Focus"},{id:"ai",label:"AI"},{id:"settings",label:"Settings"}].map(option => (
+                    <button key={option.id} onClick={() => setFilter(option.id)} style={{padding:"4px 9px",borderRadius:99,border:"1px solid",borderColor:filter===option.id?"var(--violet)":"var(--b1)",background:filter===option.id?"rgba(167,139,250,0.08)":"transparent",color:filter===option.id?"var(--violet)":"var(--t3)",fontSize:10,fontWeight:700,fontFamily:"var(--mono)",cursor:"pointer"}}>
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="panel-bd">
+                <LogFeed logs={filteredLogs.slice(0, 12)} emptyTitle="No matching events" emptySub="Try another filter or create a task to generate new signals." />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <Toast toast={toast}/>
+    </>
+  );
+}
+
 function DonePage({ tasks, setTasks, sessions }) {
   const [search,setSearch]=useState(""), [toast,showToast]=useToast();
   const restore=id=>{setTasks(t=>t.map(x=>x.id===id?{...x,status:"pending",completedAt:undefined}:x));showToast("Restored","#60a5fa")};
@@ -954,25 +1648,94 @@ function DonePage({ tasks, setTasks, sessions }) {
 /* ══════════════════════════════════════════════
    PAGE: FOCUS
 ══════════════════════════════════════════════ */
-function FocusPage({ sessions, onAddSession, tasks }) {
-  const [rem,setRem]=useState(FOCUS_TOTAL), [running,setRunning]=useState(false), [done,setDone]=useState(false);
-  const [linked,setLinked]=useState(""), [notes,setNotes]=useState("");
-  const iRef=useRef(null);
+function FocusPage({ sessions, onAddSession, tasks, settings, setSettings, onLog }) {
+  const extensionRuntime =
+    typeof chrome !== "undefined" &&
+    Boolean(chrome?.runtime?.id && chrome?.storage?.local);
+  const [focusState, setFocusState] = useLS(FOCUS_STORAGE_KEY, EMPTY_FOCUS_STATE);
+  const [now, setNow] = useState(Date.now());
+  const state = { ...EMPTY_FOCUS_STATE, ...(focusState || {}) };
   const today=new Date().toDateString();
   const todayN=sessions.filter(s=>s?.date && new Date(s.date).toDateString()===today).length;
   const totalMin=sessions.length*25;
   const streak=useMemo(()=>{let s=0;for(let i=0;i<60;i++){const d=new Date();d.setDate(d.getDate()-i);if(sessions.some(x=>x?.date && new Date(x.date).toDateString()===d.toDateString()))s++;else break}return s},[sessions]);
-  useEffect(()=>{
-    if(running){iRef.current=setInterval(()=>setRem(r=>{if(r<=1){clearInterval(iRef.current);setRunning(false);setDone(true);onAddSession({date:new Date().toISOString(),taskId:linked||null,notes});return 0}return r-1}),1000)}
-    else clearInterval(iRef.current);
-    return()=>clearInterval(iRef.current);
-  },[running,linked,notes,onAddSession]);
-  const reset=()=>{setRem(FOCUS_TOTAL);setRunning(false);setDone(false)};
-  const mins=Math.floor(rem/60), secs=rem%60;
-  const pct=((FOCUS_TOTAL-rem)/FOCUS_TOTAL)*100;
+  const remainingMs=state.status==="running"&&state.endsAt?Math.max(state.endsAt-now,0):Math.max(state.remainingMs||FOCUS_TOTAL_MS,0);
+  const running=state.status==="running";
+  const paused=state.status==="paused";
+  const done=state.status==="completed";
+  const mins=Math.floor(remainingMs/60000), secs=Math.floor((remainingMs%60000)/1000);
+  const pct=((FOCUS_TOTAL_MS-remainingMs)/FOCUS_TOTAL_MS)*100;
   const r=118, circ=2*Math.PI*r, off=circ-(pct/100)*circ;
   const pendingTasks=tasks.filter(t=>t.status!=="done");
   const recent=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
+  const notificationSettings = normalizeSettings(settings).notifications;
+
+  const patchFocusState = useCallback(updater => {
+    setFocusState(prev => {
+      const current = { ...EMPTY_FOCUS_STATE, ...(prev || {}) };
+      const next = updater instanceof Function ? updater(current) : updater;
+      return { ...current, ...next };
+    });
+  }, [setFocusState]);
+
+  useEffect(() => {
+    setNow(Date.now());
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running, state.endsAt]);
+
+  useEffect(() => {
+    if (extensionRuntime || state.status !== "running" || !state.endsAt || state.sessionLoggedAt) return;
+    if (Date.now() < state.endsAt) return;
+
+    const completedAt = state.endsAt;
+    const sessionId = state.sessionId || String(completedAt);
+    onAddSession({ id:sessionId, date:new Date(completedAt).toISOString(), taskId:state.taskId||null, notes:state.notes||"" });
+    onLog("focus_completed", "Focus session completed after 25 minutes.", { source:"focus-preview" });
+    patchFocusState({
+      status:"completed",
+      endsAt:null,
+      remainingMs:0,
+      completedAt,
+      sessionLoggedAt:completedAt,
+      sessionId,
+    });
+  }, [extensionRuntime, state.status, state.endsAt, state.sessionLoggedAt, state.sessionId, state.taskId, state.notes, onAddSession, onLog, patchFocusState]);
+
+  const updateFocusSetting = (key, value) => {
+    setSettings(current => ({
+      ...current,
+      notifications: {
+        ...current.notifications,
+        [key]: value,
+      },
+    }));
+    onLog("settings_focus_updated", `${value ? "Enabled" : "Disabled"} ${key}.`, { source:"focus-settings" });
+  };
+
+  const reset=()=>{patchFocusState({status:"idle",startedAt:null,endsAt:null,remainingMs:FOCUS_TOTAL_MS,sessionId:null,completedAt:null,sessionLoggedAt:null})};
+  const toggleFocus=()=>{
+    const timestamp=Date.now();
+    if(running){
+      patchFocusState({status:"paused",endsAt:null,remainingMs:Math.max((state.endsAt||timestamp)-timestamp,0)});
+      return;
+    }
+    const resuming=paused;
+    const remaining=resuming?Math.max(state.remainingMs||0,1000):FOCUS_TOTAL_MS;
+    patchFocusState({
+      status:"running",
+      startedAt:resuming?(state.startedAt||timestamp):timestamp,
+      endsAt:timestamp+remaining,
+      remainingMs:remaining,
+      sessionId:resuming?(state.sessionId||String(timestamp)):String(timestamp),
+      completedAt:null,
+      sessionLoggedAt:null,
+    });
+  };
+  const phaseLabel=done?"done":running?"focusing":paused?"paused":"ready";
+  const actionLabel=running?"Pause":paused?"Resume":done?"Again":"Start";
+  const hintLabel=running?"Focus session is active across the extension":paused?"Session paused - resume when ready":done?"Great work. Your 25-minute session is complete.":"25-minute deep work session";
   return (
     <>
       <div className="page-hdr">
@@ -991,7 +1754,7 @@ function FocusPage({ sessions, onAddSession, tasks }) {
         </div>
         {/* Timer center */}
         <div className="focus-main">
-          {done&&<div className="fc-done">✦ Session complete — 25 minutes logged</div>}
+          {done&&<div className="fc-done">Session complete - 25 minutes logged</div>}
           <div className="focus-main-shell">
             <div className="focus-ring-wrap">
               <svg width="256" height="256" viewBox="0 0 256 256" style={{position:"absolute",inset:0}}>
@@ -1004,17 +1767,17 @@ function FocusPage({ sessions, onAddSession, tasks }) {
               </g>
             </svg>
             <div className="ring-inner">
-              <div className="ring-phase">{done?"✦ done":running?"focusing":"ready"}</div>
+              <div className="ring-phase">{phaseLabel}</div>
               <div className={`ring-time ${running?"ticking":""}`}>{String(mins).padStart(2,"0")}:{String(secs).padStart(2,"0")}</div>
-              <div className="ring-session">session {todayN+(done?0:1)} · today</div>
+              <div className="ring-session">session {todayN+(done?0:1)} - today</div>
             </div>
           </div>
           <div className="focus-controls">
             <div className="fc-row">
-              <button className="fc-btn" onClick={reset}>↺ Reset</button>
-              <button className="fc-btn primary" onClick={()=>{setDone(false);setRunning(o=>!o)}}>{running?"⏸ Pause":done?"▶ Again":"▶ Start"}</button>
+              <button className="fc-btn" onClick={reset}>Reset</button>
+              <button className="fc-btn primary" onClick={toggleFocus}>{actionLabel}</button>
             </div>
-            <div className="fc-hint">{running?"Stay focused — timer is running":done?"Great work! Take a short break.":"25-minute deep work session"}</div>
+            <div className="fc-hint">{hintLabel}</div>
           </div>
           </div>
         </div>
@@ -1024,25 +1787,59 @@ function FocusPage({ sessions, onAddSession, tasks }) {
             <div className="focus-side-label">Session Setup</div>
             <div className="field">
               <label className="field-label">Link to task</label>
-              <select value={linked} onChange={e=>setLinked(e.target.value)} style={{width:"100%",padding:"8px 11px",background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:8,color:linked?"var(--t1)":"var(--t3)",fontFamily:"var(--sans)",fontSize:12,outline:"none",appearance:"none",cursor:"pointer"}}>
-                <option value="">— None —</option>
+              <select value={state.taskId || ""} onChange={e=>patchFocusState({taskId:e.target.value})} style={{width:"100%",padding:"8px 11px",background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:8,color:(state.taskId || "")?"var(--t1)":"var(--t3)",fontFamily:"var(--sans)",fontSize:12,outline:"none",appearance:"none",cursor:"pointer"}}>
+                <option value="">- None -</option>
                 {pendingTasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}
               </select>
             </div>
             <div className="field">
               <label className="field-label">Session goal</label>
-              <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="What will you accomplish?" className="inp" style={{minHeight:56}}/>
+              <textarea value={state.notes || ""} onChange={e=>patchFocusState({notes:e.target.value})} placeholder="What will you accomplish?" className="inp" style={{minHeight:56}}/>
             </div>
             <div className="tiles" style={{marginBottom:16}}>
-              {[{l:"Today",v:todayN,c:"var(--violet)",u:"sessions"},{l:"Total",v:`${totalMin}m`,c:"var(--blue)",u:"logged"},{l:"Streak",v:streak,c:"var(--amber)",u:"days"},{l:"All time",v:sessions.length,c:"var(--green)",u:"sessions"}].map((s,i)=>(
+              {[{l:"Today",v:todayN,c:"var(--violet)",u:"sessions"},{l:"Total",v:`${totalMin}m`,c:"var(--blue)",u:"logged"},{l:"Streak",v:streak,c:"var(--amber)",u:"days"},{l:"Status",v:running?"live":paused?"pause":done?"done":"idle",c:running?"var(--green)":paused?"var(--amber)":"var(--t2)",u:"mode"}].map((s,i)=>(
                 <div key={i} className="tile"><div className="tile-lbl">{s.l}</div><div className="tile-val" style={{color:s.c,fontSize:15}}>{s.v}<span className="tile-unit">{s.u}</span></div></div>
               ))}
+            </div>
+          </div>
+          <div className="focus-side-section">
+            <div className="focus-side-label">Notifications</div>
+            <ToggleRow
+              label="Completion popup"
+              hint="Show a browser notification when the 25-minute session ends."
+              checked={notificationSettings.focusComplete}
+              onChange={() => updateFocusSetting("focusComplete", !notificationSettings.focusComplete)}
+              accent="var(--green)"
+            />
+            <ToggleRow
+              label="Start notification"
+              hint="Notify when a focus session starts from the extension."
+              checked={notificationSettings.focusStart}
+              onChange={() => updateFocusSetting("focusStart", !notificationSettings.focusStart)}
+              accent="var(--blue)"
+            />
+            <ToggleRow
+              label="Pause notification"
+              hint="Notify when a running focus session is paused."
+              checked={notificationSettings.focusPause}
+              onChange={() => updateFocusSetting("focusPause", !notificationSettings.focusPause)}
+              accent="var(--amber)"
+            />
+            <ToggleRow
+              label="Toolbar blink"
+              hint="Pulse the extension badge while Focus Mode is actively running."
+              checked={notificationSettings.badgePulse}
+              onChange={() => updateFocusSetting("badgePulse", !notificationSettings.badgePulse)}
+              accent="var(--violet)"
+            />
+            <div style={{fontSize:10,color:"var(--t3)",fontFamily:"var(--mono)",lineHeight:1.5,paddingBottom:4}}>
+              {extensionRuntime ? "These settings update the unpacked extension immediately." : "These settings are saved now and will control the extension when it runs in Chrome."}
             </div>
           </div>
           <div className="focus-side-section" style={{paddingBottom:16}}>
             <div className="focus-side-label">Recent Sessions</div>
             {recent.length===0?(
-              <div style={{fontSize:11,color:"var(--t3)",fontFamily:"var(--mono)",textAlign:"center",padding:"16px 0"}}>No sessions yet. Start one →</div>
+              <div style={{fontSize:11,color:"var(--t3)",fontFamily:"var(--mono)",textAlign:"center",padding:"16px 0"}}>No sessions yet. Start one.</div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:7}}>
                 {recent.map((s,i)=>{
@@ -1074,8 +1871,24 @@ function FocusPage({ sessions, onAddSession, tasks }) {
 export default function WorkZen() {
   const [tasks,    setTasks]    = useLS("wz_tasks",    []);
   const [sessions, setSessions] = useLS("wz_sessions", []);
+  const [settingsValue, setSettingsValue] = useLS(SETTINGS_STORAGE_KEY, DEFAULT_SETTINGS);
+  const [logsValue, setLogsValue] = useLS(LOGS_STORAGE_KEY, []);
   const [page,     setPage]     = useState("all");
-  const addSession = useCallback(s=>setSessions(p=>[...p,s]),[setSessions]);
+  const settings = normalizeSettings(settingsValue);
+  const logs = Array.isArray(logsValue) ? logsValue : [];
+  const setSettings = useCallback(updater => {
+    setSettingsValue(current => normalizeSettings(updater instanceof Function ? updater(normalizeSettings(current)) : updater));
+  }, [setSettingsValue]);
+  const onLog = useCallback((kind, message, details = {}) => {
+    setLogsValue(current => {
+      const next = Array.isArray(current) ? current : [];
+      return [createLogEntry(kind, message, details), ...next].slice(0, 180);
+    });
+  }, [setLogsValue]);
+  const addSession = useCallback(s=>setSessions(p=>{
+    if (s?.id && p.some(x=>x?.id===s.id)) return p;
+    return [...p,s];
+  }),[setSessions]);
   const isExtensionRuntime =
     typeof window !== "undefined" &&
     /extension:$/.test(window.location.protocol);
@@ -1084,10 +1897,12 @@ export default function WorkZen() {
   const doneN   = tasks.filter(t=>t.status==="done").length;
   const today   = new Date().toDateString();
   const sessN   = sessions.filter(s=>new Date(s.date).toDateString()===today).length;
+  const obsN    = buildObservabilityActions(tasks, sessions, logs).length;
 
   const NAV = [
     { id:"all",    icon:"▣", label:"All Tasks",  badge:tasks.length, bc:""       },
     { id:"active", icon:"◫", label:"Active",      badge:pendN,        bc:"amber"  },
+    { id:"observability", icon:"OBS", label:"Observability", badge:obsN, bc:"blue" },
     { id:"done",   icon:"◆", label:"Done",        badge:doneN,        bc:"green"  },
     { id:"focus",  icon:"◎", label:"Focus Mode",  badge:sessN>0?`${sessN} today`:null, bc:"violet" },
   ];
@@ -1118,10 +1933,11 @@ export default function WorkZen() {
 
         {/* Content */}
         <div className="content">
-          {page==="all"    && <AllPage    tasks={tasks} setTasks={setTasks} sessions={sessions}/>}
-          {page==="active" && <ActivePage tasks={tasks} setTasks={setTasks} sessions={sessions}/>}
+          {page==="all"    && <AllPage    tasks={tasks} setTasks={setTasks} sessions={sessions} onLog={onLog} settings={settings}/>}
+          {page==="active" && <ActivePage tasks={tasks} setTasks={setTasks} sessions={sessions} logs={logs} onLog={onLog}/>}
+          {page==="observability" && <ObservabilityPage tasks={tasks} setTasks={setTasks} sessions={sessions} logs={logs} onLog={onLog} settings={settings}/>}
           {page==="done"   && <DonePage   tasks={tasks} setTasks={setTasks} sessions={sessions}/>}
-          {page==="focus"  && <FocusPage  sessions={sessions} onAddSession={addSession} tasks={tasks}/>}
+          {page==="focus"  && <FocusPage  sessions={sessions} onAddSession={addSession} tasks={tasks} settings={settings} setSettings={setSettings} onLog={onLog}/>}
         </div>
       </div>
       </div>
