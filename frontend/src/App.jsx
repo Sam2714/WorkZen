@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useVoiceCapture } from "./hooks/useVoiceCapture";
 
 /* ══════════════════════════════════════════════
    GLOBAL CSS
@@ -490,11 +491,6 @@ function getLogAppearance(kind = "") {
     return { label:"Status", color:"var(--green)", bg:"var(--green-dim)", border:"rgba(74,222,128,0.2)" };
   }
   return { label:"Task", color:"var(--amber)", bg:"var(--amber-dim)", border:"rgba(245,166,35,0.2)" };
-}
-
-function getSpeechRecognitionCtor() {
-  if (typeof window === "undefined") return null;
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 function buildTaskFromAgentPrompt(prompt, settings) {
@@ -1014,7 +1010,7 @@ function LogFeed({ logs, emptyTitle = "No activity yet", emptySub = "The latest 
   );
 }
 
-function AgentTaskPanel({ onCreateTask, settings }) {
+function AgentTaskPanel({ onCreateTask, onLog, onToast, settings }) {
   const [agentInput, setAgentInput] = useState("");
   const [messages, setMessages] = useState([
     {
@@ -1023,12 +1019,7 @@ function AgentTaskPanel({ onCreateTask, settings }) {
       text: "Describe a task naturally and I will turn it into a task with title, notes, and priority.",
     },
   ]);
-  const [listening, setListening] = useState(false);
-  const recognitionRef = useRef(null);
-  const recognitionCtor = getSpeechRecognitionCtor();
   const voiceEnabled = normalizeSettings(settings).ai.voiceCapture;
-
-  useEffect(() => () => recognitionRef.current?.stop?.(), []);
 
   const submitPrompt = useCallback((prompt, source = "chat") => {
     const parsed = buildTaskFromAgentPrompt(prompt, settings);
@@ -1047,31 +1038,27 @@ function AgentTaskPanel({ onCreateTask, settings }) {
     setAgentInput("");
   }, [onCreateTask, settings]);
 
-  const handleVoiceCapture = () => {
-    if (!voiceEnabled) return;
-    if (!recognitionCtor) return;
-
-    const recognition = new recognitionCtor();
-    recognition.lang = "en-IN";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
-
-    recognition.onstart = () => setListening(true);
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
-    recognition.onresult = event => {
-      const transcript = Array.from(event.results || [])
-        .map(result => result?.[0]?.transcript || "")
-        .join(" ")
-        .trim();
-      if (!transcript) return;
+  const voice = useVoiceCapture({
+    enabled: voiceEnabled,
+    onTranscript: (transcript, details) => {
       setAgentInput(transcript);
       submitPrompt(transcript, "voice");
-    };
+      if (details?.source === "fallback") {
+        onLog?.(
+          "voice_remote_transcribed",
+          "Recorder fallback sent audio to the backend and created a task.",
+          details,
+        );
+      }
+    },
+    onEvent: (event) => {
+      onLog?.(event.kind, event.message, event.details);
 
-    recognition.start();
-  };
+      if (event.kind === "voice_failed") {
+        onToast?.(event.message, "#fb7185");
+      }
+    },
+  });
 
   return (
     <div className="panel" style={{ animationDelay:"18ms" }}>
@@ -1125,26 +1112,58 @@ function AgentTaskPanel({ onCreateTask, settings }) {
           <button
             type="button"
             className="fc-btn"
-            onClick={handleVoiceCapture}
-            disabled={!voiceEnabled || !recognitionCtor}
+            onClick={voice.toggleCapture}
+            disabled={voice.disabled}
             style={{
               minHeight:40,
               minWidth:96,
-              opacity:voiceEnabled && recognitionCtor ? 1 : 0.55,
-              borderColor:listening ? "rgba(74,222,128,0.35)" : "var(--b1)",
-              color:listening ? "var(--green)" : "var(--t2)",
+              opacity:voice.disabled ? 0.55 : 1,
+              borderColor:voice.error
+                ? "rgba(251,113,133,0.35)"
+                : voice.phase === "transcribing"
+                  ? "rgba(96,165,250,0.35)"
+                  : voice.isListening
+                    ? "rgba(74,222,128,0.35)"
+                    : "var(--b1)",
+              color:voice.error
+                ? "var(--red)"
+                : voice.phase === "transcribing"
+                  ? "var(--blue)"
+                  : voice.isListening
+                    ? "var(--green)"
+                    : "var(--t2)",
             }}
           >
-            {listening ? "Listening" : "Voice"}
+            {voice.buttonLabel}
           </button>
         </div>
-        <div style={{ marginTop:8, fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", lineHeight:1.5 }}>
-          {recognitionCtor
-            ? voiceEnabled
-              ? "Voice capture listens once and turns the transcript into a task."
-              : "Voice capture is turned off in settings."
-            : "Voice capture is not available in this browser surface."}
+        <div
+          style={{
+            marginTop:8,
+            fontSize:10,
+            color:voice.error
+              ? "var(--red)"
+              : voice.phase === "transcribing"
+                ? "var(--blue)"
+                : voice.isListening
+                  ? "var(--green)"
+                  : "var(--t3)",
+            fontFamily:"var(--mono)",
+            lineHeight:1.5,
+          }}
+        >
+          {voice.helperText}
         </div>
+        {voiceEnabled && voice.fallbackSupported && (
+          <div style={{ marginTop:8, fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", lineHeight:1.5 }}>
+            Recorder fallback sends a short audio clip to the configured backend for transcription when browser speech recognition is unavailable or fails.
+          </div>
+        )}
+        {!voiceEnabled && (
+          <div style={{ marginTop:8, fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", lineHeight:1.5 }}>
+            Voice capture is currently disabled for this workspace.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1232,7 +1251,12 @@ function AllPage({ tasks, setTasks, sessions, onLog, settings }) {
                 <TaskForm key={editId||"new"} editTask={editTask} onSubmit={editId?handleTaskUpdate:handleTaskCreate} onCancel={editId?()=>setEditId(null):undefined}/>
               </div>
             </div>
-            <AgentTaskPanel onCreateTask={handleTaskCreate} settings={settings} />
+            <AgentTaskPanel
+              onCreateTask={handleTaskCreate}
+              onLog={onLog}
+              onToast={showToast}
+              settings={settings}
+            />
             <div className="panel" style={{animationDelay:"45ms"}}>
               <div className="panel-hd"><span className="panel-title">insights</span></div>
               <div className="panel-bd">

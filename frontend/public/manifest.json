@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "description": "WorkZen side panel extension for tasks, focus sessions, and progress tracking.",
   "permissions": ["storage", "sidePanel", "alarms", "notifications"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js"
   },

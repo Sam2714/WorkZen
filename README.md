@@ -89,5 +89,8 @@ npm start
 - Build the extension bundle: `build-workzen-extension.bat`
 - Load `frontend/dist` as an unpacked extension in `chrome://extensions` or `edge://extensions`
 - Clicking the extension action opens WorkZen in the browser side panel
+- Voice fallback now posts recorded audio to the backend at `VITE_API_BASE_URL`, so the backend must be running for remote transcription
+- Set `OPENAI_API_KEY` in `backend/.env` to enable backend transcription
+- If you publish against a non-local backend origin, add that origin to the extension `host_permissions` and backend `EXTENSION_ORIGINS`
 
 WorkZen is not another to-do list. It is the layer between planning and doing.

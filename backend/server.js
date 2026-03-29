@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import authRoutes from "./routes/auth.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import sessionRoutes from "./routes/session.routes.js";
+import voiceRoutes from "./routes/voice.routes.js";
 import { env } from "./config/env.js";
 import { connectDb } from "./config/db.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
@@ -17,10 +18,22 @@ const clientBuildDir = path.resolve(__dirname, "../frontend/dist");
 const clientIndexFile = path.join(clientBuildDir, "index.html");
 const hasClientBuild = existsSync(clientIndexFile);
 
+function isAllowedExtensionOrigin(origin) {
+  if (!origin) {
+    return false;
+  }
+
+  if (env.extensionOrigins.includes(origin)) {
+    return true;
+  }
+
+  return /^(chrome-extension|edge-extension|moz-extension):\/\/.+$/i.test(origin);
+}
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || env.clientOrigins.includes(origin)) {
+      if (!origin || env.clientOrigins.includes(origin) || isAllowedExtensionOrigin(origin)) {
         return callback(null, true);
       }
 
@@ -41,6 +54,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/sessions", sessionRoutes);
+app.use("/api/voice", voiceRoutes);
 
 if (hasClientBuild) {
   app.use(express.static(clientBuildDir));

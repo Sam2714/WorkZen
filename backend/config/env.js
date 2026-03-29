@@ -24,6 +24,17 @@ const clientOrigins = Array.from(
   ),
 );
 
+function parseOriginList(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 export const env = {
   port: Number(process.env.PORT || 4000),
   nodeEnv: process.env.NODE_ENV || "development",
@@ -33,4 +44,8 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET || "workzen-dev-secret",
   dataFile: resolveDataFile(process.env.DATA_FILE),
   backendRoot,
+  openaiApiKey: process.env.OPENAI_API_KEY || "",
+  openaiTranscribeModel:
+    process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
+  extensionOrigins: parseOriginList(process.env.EXTENSION_ORIGINS),
 };
