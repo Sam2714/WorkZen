@@ -1,5 +1,6 @@
 import { ok } from "../utils/response.js";
 import { transcribeAudioBuffer } from "../services/voice.service.js";
+import { env } from "../config/env.js";
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_MIME_TYPES = [
@@ -60,4 +61,12 @@ export async function transcribeVoice(req, res) {
   }
 
   return ok(res, data);
+}
+
+export function getVoiceStatus(_req, res) {
+  return ok(res, {
+    backendOnline: true,
+    transcriptionConfigured: Boolean(env.openaiApiKey),
+    model: env.openaiTranscribeModel,
+  });
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { transcribeAudio } from "../services/api";
+import { fetchVoiceStatus, transcribeAudio } from "../services/api";
 
 const MAX_RECORDING_MS = 15_000;
 const FALLBACK_MIME_TYPES = [
@@ -113,6 +113,12 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
   const [mode, setMode] = useState(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [diagnostics, setDiagnostics] = useState({
+    microphonePermission: "unknown",
+    backendOnline: null,
+    transcriptionConfigured: null,
+    model: null,
+  });
   const recognitionRef = useRef(null);
   const recognitionStateRef = useRef(null);
   const streamRef = useRef(null);
@@ -132,6 +138,40 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
     if (autoStopRef.current) {
       clearTimeout(autoStopRef.current);
       autoStopRef.current = null;
+    }
+  }, []);
+
+  const refreshDiagnostics = useCallback(async () => {
+    if (typeof navigator !== "undefined" && navigator.permissions?.query) {
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: "microphone" });
+        setDiagnostics((current) => ({
+          ...current,
+          microphonePermission: permissionStatus.state || "unknown",
+        }));
+      } catch {
+        setDiagnostics((current) => ({
+          ...current,
+          microphonePermission: current.microphonePermission || "unknown",
+        }));
+      }
+    }
+
+    try {
+      const voiceStatus = await fetchVoiceStatus();
+      setDiagnostics((current) => ({
+        ...current,
+        backendOnline: true,
+        transcriptionConfigured: Boolean(voiceStatus?.transcriptionConfigured),
+        model: voiceStatus?.model || null,
+      }));
+    } catch {
+      setDiagnostics((current) => ({
+        ...current,
+        backendOnline: false,
+        transcriptionConfigured: false,
+        model: null,
+      }));
     }
   }, []);
 
@@ -200,6 +240,12 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
           language: data?.language || null,
         });
       } catch (requestError) {
+        setDiagnostics((current) => ({
+          ...current,
+          backendOnline: requestError?.status ? true : false,
+          transcriptionConfigured:
+            requestError?.status === 503 ? false : current.transcriptionConfigured,
+        }));
         finishWithError(
           requestError?.message || "Remote transcription failed.",
           "voice_failed",
@@ -325,6 +371,12 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
           stopFallbackCapture();
         }, MAX_RECORDING_MS);
       } catch (captureError) {
+        if (captureError?.name === "NotAllowedError") {
+          setDiagnostics((current) => ({
+            ...current,
+            microphonePermission: "denied",
+          }));
+        }
         finishWithError(
           captureError?.name === "NotAllowedError"
             ? "Microphone permission was denied."
@@ -524,6 +576,10 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
   ]);
 
   useEffect(() => {
+    refreshDiagnostics();
+  }, [refreshDiagnostics]);
+
+  useEffect(() => {
     return () => {
       if (recognitionStateRef.current) {
         recognitionStateRef.current.cancelled = true;
@@ -572,6 +628,7 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
   return {
     buttonLabel,
     disabled,
+    diagnostics,
     error,
     helperText,
     isListening: phase === "listening",
@@ -579,6 +636,7 @@ export function useVoiceCapture({ enabled = true, onTranscript, onEvent }) {
     phase,
     recognitionAvailable: Boolean(recognitionCtor),
     fallbackSupported,
+    refreshDiagnostics,
     toggleCapture,
   };
 }

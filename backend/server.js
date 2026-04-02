@@ -48,6 +48,7 @@ app.get("/health", (_req, res) => {
     status: "ok",
     environment: env.nodeEnv,
     frontendServed: hasClientBuild,
+    voiceConfigured: Boolean(env.openaiApiKey),
   });
 });
 

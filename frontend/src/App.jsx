@@ -1060,6 +1060,43 @@ function AgentTaskPanel({ onCreateTask, onLog, onToast, settings }) {
     },
   });
 
+  const voiceChecks = [
+    {
+      label: "Mic",
+      ok: voice.diagnostics.microphonePermission !== "denied",
+      detail:
+        voice.diagnostics.microphonePermission === "granted"
+          ? "ready"
+          : voice.diagnostics.microphonePermission === "denied"
+            ? "denied"
+            : voice.diagnostics.microphonePermission === "prompt"
+              ? "needs permission"
+              : "unknown",
+    },
+    {
+      label: "Backend",
+      ok: voice.diagnostics.backendOnline === true,
+      detail:
+        voice.diagnostics.backendOnline === true
+          ? "online"
+          : voice.diagnostics.backendOnline === false
+            ? "offline"
+            : "checking",
+    },
+    {
+      label: "Transcribe",
+      ok: voice.diagnostics.transcriptionConfigured === true,
+      detail:
+        voice.diagnostics.backendOnline === false
+          ? "backend offline"
+          : voice.diagnostics.transcriptionConfigured === true
+            ? voice.diagnostics.model || "configured"
+            : voice.diagnostics.transcriptionConfigured === false
+              ? "missing OpenAI key"
+              : "checking",
+    },
+  ];
+
   return (
     <div className="panel" style={{ animationDelay:"18ms" }}>
       <div className="panel-hd">
@@ -1157,6 +1194,49 @@ function AgentTaskPanel({ onCreateTask, onLog, onToast, settings }) {
         {voiceEnabled && voice.fallbackSupported && (
           <div style={{ marginTop:8, fontSize:10, color:"var(--t3)", fontFamily:"var(--mono)", lineHeight:1.5 }}>
             Recorder fallback sends a short audio clip to the configured backend for transcription when browser speech recognition is unavailable or fails.
+          </div>
+        )}
+        {voiceEnabled && (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:8, marginTop:10 }}>
+            {voiceChecks.map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  padding:"8px 9px",
+                  borderRadius:10,
+                  border:`1px solid ${item.ok ? "rgba(74,222,128,0.24)" : "rgba(251,113,133,0.18)"}`,
+                  background:item.ok ? "var(--green-dim)" : "rgba(251,113,133,0.08)",
+                  minWidth:0,
+                }}
+              >
+                <div style={{ fontSize:9, color:item.ok ? "var(--green)" : "var(--red)", fontFamily:"var(--mono)", fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase" }}>
+                  {item.label}
+                </div>
+                <div style={{ fontSize:10, color:item.ok ? "var(--t1)" : "rgba(251,113,133,0.92)", marginTop:4, lineHeight:1.4 }}>
+                  {item.detail}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {voiceEnabled && (
+          <div style={{ marginTop:8, display:"flex", justifyContent:"flex-end" }}>
+            <button
+              type="button"
+              onClick={voice.refreshDiagnostics}
+              style={{
+                background:"transparent",
+                border:"none",
+                color:"var(--t3)",
+                fontSize:10,
+                fontFamily:"var(--mono)",
+                cursor:"pointer",
+                textDecoration:"underline",
+                textUnderlineOffset:3,
+              }}
+            >
+              refresh voice checks
+            </button>
           </div>
         )}
         {!voiceEnabled && (

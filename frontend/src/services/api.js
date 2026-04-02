@@ -61,4 +61,8 @@ export async function transcribeAudio({ blob, language }) {
   });
 }
 
+export async function fetchVoiceStatus() {
+  return apiRequest("/voice/status");
+}
+
 export { API_BASE_URL };
