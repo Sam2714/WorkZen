@@ -1,9 +1,56 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendRoot = path.resolve(__dirname, "..");
+const workspaceRoot = path.resolve(backendRoot, "..");
+
+function loadOptionalEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const normalized = trimmed.startsWith("export ")
+      ? trimmed.slice("export ".length).trim()
+      : trimmed;
+    const separatorIndex = normalized.indexOf("=");
+
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = normalized.slice(0, separatorIndex).trim();
+
+    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) {
+      continue;
+    }
+
+    let value = normalized.slice(separatorIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
+
+loadOptionalEnvFile(path.resolve(backendRoot, ".env"));
+loadOptionalEnvFile(path.resolve(workspaceRoot, ".env"));
 
 function resolveDataFile(dataFilePath) {
   if (!dataFilePath) {
