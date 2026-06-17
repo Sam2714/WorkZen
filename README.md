@@ -61,11 +61,43 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
+On Windows, you can also start both with:
+
+```bash
+npm run dev
+```
+
 ### Production Build And Run
 
 ```bash
 npm run build
 npm start
+```
+
+On Windows, you can also use:
+
+```bash
+run-workzen-prod.bat
+```
+
+### Health Check
+
+The backend health endpoint is:
+
+```bash
+http://127.0.0.1:4000/health
+```
+
+If that page says the site cannot be reached, the backend is not running yet. Start it first with:
+
+```bash
+npm start
+```
+
+Or verify it from the terminal with:
+
+```bash
+npm run health
 ```
 
 ## Project Docs
